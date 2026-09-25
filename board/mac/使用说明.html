@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ManageBac 看板 · Mac 版使用说明</title>
+<style>
+  :root {
+    --accent: #0071e3;
+    --red: #ff3b30; --amber: #ff9f0a; --green: #34c759; --blue: #007aff;
+    --ink-1: #1d1d1f; --ink-2: #56565c; --ink-3: #86868b;
+    --line: rgba(0,0,0,.09); --line-soft: rgba(0,0,0,.055);
+    --card: rgba(255,255,255,.78); --card-hi: #fff;
+    --shadow: 0 1px 2px rgba(0,0,0,.05), 0 6px 18px -8px rgba(0,0,0,.16);
+    --font: -apple-system, "SF Pro Text", "PingFang SC", "Helvetica Neue", system-ui, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ink-1: #f5f5f7; --ink-2: #b9b9c0; --ink-3: #8b8b93;
+      --line: rgba(255,255,255,.12); --line-soft: rgba(255,255,255,.07);
+      --card: rgba(30,30,36,.72); --card-hi: #1f1f25;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 22px -10px rgba(0,0,0,.7);
+    }
+    body { background: radial-gradient(1200px 600px at 20% -10%, #1b2333, #0c0c10 60%) fixed; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 40px 24px 72px;
+    font: 15px/1.75 var(--font); color: var(--ink-1);
+    background: radial-gradient(1200px 600px at 20% -10%, #eaf1fb, #f6f7fa 60%) fixed;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 780px; margin: 0 auto; }
+  header { margin-bottom: 26px; }
+  .kicker {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 4px 11px; border-radius: 999px; font-size: 12px; font-weight: 600;
+    color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent);
+    margin-bottom: 12px;
+  }
+  h1 { font-size: 30px; line-height: 1.2; margin: 0 0 8px; letter-spacing: -.02em; }
+  .sub { color: var(--ink-3); font-size: 14px; margin: 0; }
+  h2 {
+    font-size: 19px; margin: 34px 0 12px; letter-spacing: -.01em;
+    display: flex; align-items: center; gap: 10px;
+  }
+  h2 .n {
+    display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 8px;
+    font-size: 12.5px; font-weight: 700; color: #fff; background: var(--accent);
+    box-shadow: 0 2px 6px rgba(0,113,227,.32);
+  }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+    padding: 18px 20px; box-shadow: var(--shadow);
+    -webkit-backdrop-filter: saturate(1.6) blur(18px); backdrop-filter: saturate(1.6) blur(18px);
+  }
+  .card + .card { margin-top: 12px; }
+  ul { margin: 0; padding-left: 20px; }
+  li { margin: 5px 0; }
+  code {
+    font: 12.5px/1.4 ui-monospace, "SF Mono", Menlo, monospace;
+    background: var(--line-soft); padding: 1.5px 6px; border-radius: 6px;
+  }
+  .kbd {
+    font: 12px/1 ui-monospace, "SF Mono", Menlo, monospace;
+    border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 6px;
+    padding: 2px 6px; background: var(--card-hi);
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+  th { color: var(--ink-3); font-weight: 600; font-size: 12.5px; }
+  tr:last-child td { border-bottom: 0; }
+  .tip {
+    display: flex; gap: 10px; margin-top: 14px; padding: 12px 14px;
+    border-radius: 12px; background: color-mix(in srgb, var(--accent) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent); font-size: 13.5px;
+  }
+  .tip b { flex: none; }
+  .warn {
+    background: color-mix(in srgb, var(--amber) 12%, transparent);
+    border-color: color-mix(in srgb, var(--amber) 26%, transparent);
+  }
+  footer { margin-top: 36px; color: var(--ink-3); font-size: 12.5px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="kicker">🧪 ManageBac 看板 · macOS 版</div>
+    <h1>使用说明</h1>
+    <p class="sub">作业、课表、成绩、Teams 学习待办，加一个能直接问的 AI · 适配 macOS 26 液态玻璃</p>
+  </header>
+
+  <h2><span class="n">1</span>一个 App，两个入口</h2>
+  <div class="card">
+    <ul>
+      <li><strong>ManageBac 看板.app</strong> —— 唯一的 App。双击打开完整看板窗口。</li>
+      <li><strong>菜单栏图标</strong> —— 同一个 App 常驻菜单栏，点图标看今天的作业与倒计时；关掉主窗口它也还在（真退出走菜单栏面板里的「退出」或 <span class="kbd">⌘</span>+<span class="kbd">Q</span>）。</li>
+      <li>以前是「看板 + 菜单栏」两个 App，已合并成一个：一个进程、一份数据、一份通知——不会再有同一条消息弹两遍、或者旧成绩反复冒出来的情况。</li>
+    </ul>
+    <p style="margin-top:12px">首次打开若提示「无法验证开发者」，右键 App →「打开」→ 再点「打开」即可（本机自己签的名，不是从商店下载的）。</p>
+  </div>
+
+  <h2><span class="n">2</span>五个分区在讲什么</h2>
+  <div class="card">
+    <ul>
+      <li><strong>待办</strong> —— 顶部是「距离最近一件事还有多久」的大倒计时（上课 / 下课 / 晚自习），下面四格是待完成、24 小时内、本周内、已出分；再往下按「越急越靠前」排的作业卡，卡左边的色条就是紧急度。</li>
+      <li><strong>Teams</strong> —— 见第 3 节。</li>
+      <li><strong>课程</strong> —— 今天的课表 + 一整周的课表网格，按学科配色，换行就是一天。<strong>课表不随 App 一起发出去</strong>：它是只属于你的东西，每台电脑要自己导一次（启用希悦后点「立即同步」，或把 <code>timetable.json</code> 放进数据目录）。没导之前这一页会告诉你两条路，见第 6 节。</li>
+      <li><strong>成绩</strong> —— GPA 总览环 + 各科明细，点任意一行看该科全部作业。</li>
+      <li><strong>灵析 AI</strong> —— 见第 4 节。看板里的对话助手，作业、成绩、课表都能直接问它。</li>
+      <li><strong>设置</strong> —— 见第 5 节，四个账号统一在「设置 → 账号管理」里管。</li>
+    </ul>
+    <p style="margin-top:12px">快捷键：<span class="kbd">⌘</span>+<span class="kbd">1</span>~<span class="kbd">5</span> 切分区、<span class="kbd">⌘</span>+<span class="kbd">R</span> 立即刷新、<span class="kbd">Esc</span> 关掉登录窗。</p>
+  </div>
+
+  <h2><span class="n">3</span>灵析 AI：不用 API Key 的对话助手</h2>
+  <div class="card">
+    <p>灵析 AI 是看板里的<strong>对话助手</strong>：把作业、成绩、课表、或者一张截图丢进去问它就行。它走的是<strong>你自己 DeepSeek 账号的网页登录态</strong>——不需要注册开发者、不需要填 API Key、不额外收费，用的是你本来就能用的那个额度。</p>
+
+    <h3 style="margin:16px 0 6px;font-size:14px">怎么连</h3>
+    <p>进灵析 AI 分区（没登录时会自动把登录页摊在窗口上），或者点「设置 → 账号管理 → DeepSeek → 去登录」。在上面用<strong>手机号 / 邮箱 / 微信任意一种</strong>登录即可，登完点左上角的「我已登录好了」。这台电脑会记住登录，以后打开就能直接用。</p>
+
+    <h3 style="margin:16px 0 6px;font-size:14px">怎么用</h3>
+    <ul>
+      <li><strong>直接打字问</strong>，<span class="kbd">⏎</span> 发送、<span class="kbd">⇧⏎</span> 换行。空着的时候页面上有三条起手式可以直接点。</li>
+      <li><strong>带文件</strong>：点输入框左边的回形针选文件 / 图片，或直接把图<strong>拖进剪贴板</strong>——开着「剪贴板带图」时它会自动带上最新那张（永远跟最新一张同步，不会赖着上一张）。</li>
+      <li><strong>固定附件</strong>：点顶栏的「固定附件」，把某个文件钉住，以后每次进这一页都自动带上它（比如你的课表图）。再点一次取消。</li>
+      <li><strong>换主题</strong>：它的配色、圆角、玻璃全部跟着看板设置走，切主题 / 改圆角 / 调密度时它一起变。</li>
+    </ul>
+
+    <div class="tip"><b>💡</b><div>想问「网站上的聊天记录」？点顶栏「原站」会打开真正的 DeepSeek 网页，历史记录都在那边；这边的「清空」只清空看板这一页的显示，不动网站上的记录。</div></div>
+
+    <h3 style="margin:16px 0 6px;font-size:14px">登录没成功？按这个顺序试</h3>
+    <ol>
+      <li>点「<strong>我已经登录好了</strong>」——页面登录完成后需要你确认一下。</li>
+      <li>没反应就点「<strong>重连</strong>」，把登录页整个重新加载一遍。<strong>重载不会掉登录</strong>（登录状态记在这台电脑上），所以放心点。</li>
+      <li>再不行就点「<strong>打开登录页</strong>」重登一次，或者把 App 退掉重开。</li>
+    </ol>
+    <div class="tip warn"><b>⚠️</b><div>只要登录页本身能正常输入，通道就是通的——问题基本都出在「还没登完就去看结果」。另外 DeepSeek 偶尔会要求人机验证，那一屏必须在页面里手动过掉。</div></div>
+  </div>
+
+  <h2><span class="n">4</span>Teams 板块：连一次微软账号</h2>
+  <div class="card">
+    <p>把 Microsoft Teams / Outlook 里和学习有关的东西集中到一处：微软任务里的作业、邮件里提到的事（<strong>自动转成待办</strong>）、聊天里点名提到你的消息、以及未来两周的日程。所有内容<strong>只读</strong>，绝不回写你的微软账号。</p>
+
+    <h3 style="margin:16px 0 6px;font-size:14px">怎么连</h3>
+    <p>点「连接微软账号」→ 弹出浏览器 → 选你在学校的账号（会列出这台电脑上登录过的微软账号）→ 同意即完成。连一次就够了，之后凭据会自动续期，不用重复登录。</p>
+
+    <div class="tip"><b>📶</b><div>连接过程会在卡片上实时显示进度（正在试哪条通道、第几条）。这是正常的：程序会按顺序尝试多个微软官方客户端，第一条走通的就停下来。</div></div>
+
+    <div class="tip warn"><b>⚠️</b><div>如果浏览器里出现「<strong>需要管理员批准</strong>」，说明学校租户不接受该客户端的权限申请。程序会自动改用下一个客户端重试；若所有通道都被挡住，就需要学校 IT 管理员批准——这属于租户策略，无法在本地绕过。</div></div>
+
+    <h3 style="margin:16px 0 6px;font-size:14px">它申请了哪些权限</h3>
+    <p>只申请「普通用户自己能同意」的最小集合：读你自己的邮件、日程、Microsoft To Do 任务、Teams 聊天。带 <code>.All</code> 的（读别人数据）和仅管理员可授予的权限<strong>一律不申请</strong>。</p>
+
+    <h3 style="margin:16px 0 6px;font-size:14px">某条数据源没连上怎么办</h3>
+    <p>程序会按实际拿到的权限决定拉哪些源，缺权限的<strong>自动跳过</strong>，不报错、不刷屏。例如 Planner 需要管理员权限，若未获批就只显示 Microsoft To Do 里的任务，其余功能不受影响。</p>
+
+    <h3 style="margin:16px 0 6px;font-size:14px">怎么断开</h3>
+    <p>卡片上有「断开连接」，本地令牌立刻清除，不会影响你的微软账号设置。</p>
+  </div>
+
+  <h2><span class="n">5</span>设置能改什么</h2>
+  <div class="card">
+    <p>设置页顶部有一条<strong>实时预览</strong>，改任何一项都会立刻反映到预览、菜单栏角标和整个看板里。</p>
+    <table>
+      <tr><th>分组</th><th>可调项</th></tr>
+      <tr><td>账号管理</td><td><strong>四个账号一处管</strong>：ManageBac、Microsoft Teams、希悦、灵析 AI（DeepSeek）各自显示「已连接 / 未连接」、连的是哪个账号、什么时候校验过，能单独登录 / 退出 / 重连。位置就在「主题」下面——见第 6 节</td></tr>
+      <tr><td>外观与主题</td><td>主题（跟随系统 / 浅色 / 深色）、界面密度、圆角、<strong>液态玻璃强度</strong>、字号缩放、减弱动效、降低透明度</td></tr>
+      <tr><td>强调色与学科配色</td><td>强调色 6 选 1 或自己取色；10 个学科每个都能单独改色；另有莫兰迪 / 鲜艳 / 沉稳三套预设一键换</td></tr>
+      <tr><td>通知</td><td>总开关、通知哪些来源（待办到期 / Teams 新任务 / 邮件 / 日程 / 成绩 / English Corner / 每日汇总）、提前几小时提醒、学科白名单、免打扰时段、提示音；<strong>通知图标按「学科 × 事项种类」两个维度区分</strong>——学科决定底色与主符号，事项种类决定右下角小圆角标和标题最前面的 emoji，所以一眼就能分出「哪一科、哪类事」</td></tr>
+      <tr><td>待办紧急度阈值</td><td>红 / 黄 / 蓝三档的小时数用滑块调（三条滑块的轨道颜色就是卡片上三档标签的颜色），右侧始终显示当前数值；还能设「不显示的关键词」</td></tr>
+      <tr><td>刷新与启动</td><td>自动刷新间隔、开机自动启动、菜单栏显示哪几档、逾期是否计入、待办显示条数上限</td></tr>
+      <tr><td>小看板</td><td>显示哪些区块（大计时 / 待办 / 课堂 / 成绩 / EC / 快速设置）、面板宽度与高度、待办条数、成绩每行几个；<strong>主题默认跟随大看板</strong>，也可以关掉跟随、让小看板单独选深浅色与配色</td></tr>
+      <tr><td>作息</td><td>起床 / 晚自习起止时间，以及<strong>「打开看板时停在哪一页」</strong>（默认「待办」，切页不会把它改掉）</td></tr>
+      <tr><td>配置文件</td><td>设置存在 <code>~/.mbboard/settings.json</code>；「恢复默认」保留使用者档案，「恢复新手导览」连档案一起清空并回到第一屏重新引导</td></tr>
+    </table>
+    <div class="tip"><b>💡</b><div>改错了想恢复？设置页最下面有「恢复默认」（保留你的名字与年级）。想彻底从头来一遍，用「恢复新手导览」——它会清空全部设置与档案，然后立刻带你重新走一遍引导。所有设置都存在本机，不会上传。</div></div>
+  </div>
+
+  <h2><span class="n">6</span>四个账号统一管：账号管理</h2>
+  <div class="card">
+    <p>这个看板一共要连 <strong>4 个账号</strong>，全部集中在 <strong>设置 →「主题」下面的「账号管理」</strong> 里。每张卡都会告诉你：连没连上、连的是哪个账号、上次是什么时候校验的，并且能单独登录 / 退出 / 重连。</p>
+    <table>
+      <tr><th>账号</th><th>它管什么</th><th>怎么连</th></tr>
+      <tr><td>ManageBac</td><td>作业、截止时间、成绩、课表</td><td>账号 + 密码。勾了「记住」就存进 macOS 钥匙串，只在本机、只有你能读；不勾就只在这一次登录里用一下</td></tr>
+      <tr><td>Microsoft Teams</td><td>从任务、邮件、聊天里自动挑出学习待办</td><td>点「打开浏览器登录」→ 在弹出来的浏览器里选学校账号 → 同意。这边会自动识别</td></tr>
+      <tr><td>希悦</td><td>课表（比 ManageBac 的更好看），一周同步一次就够</td><td>点「打开希悦登录」→ 在窗口里登录 → 回来点「同步课表」</td></tr>
+      <tr><td>DeepSeek（灵析 AI）</td><td>灵析 AI 的对话能力</td><td>点「去登录」→ 登录页盖在窗口上 → 登完收起</td></tr>
+    </table>
+    <p style="margin-top:12px">顶部两个按钮：<strong>「全部检查」</strong>把四个账号一起查一遍；<strong>「重连」</strong>是在 ManageBac / Teams / 希悦 一起变红时用的——那通常是本机服务没起来，点一下会把它重新拉起来再查一遍。</p>
+    <div class="tip"><b>💡</b><div>四个账号都可以<strong>先跳过、以后再用</strong>。引导里每一步都能「跳过这一步」，设置页里随时能补——跳过不影响其它功能，用到哪一块它会提示你。</div></div>
+  </div>
+
+  <h2><span class="n">7</span>数据从哪来、隐私怎么算</h2>
+  <div class="card">
+    <ul>
+      <li>程序用你登录的会话去读 ManageBac 的作业、课表与成绩，<strong>只读，不会替你提交任何东西</strong>。课表内容也不在 App 里：它从你自己电脑上的 <code>timetable.json</code> 读，别人的电脑上没有这份文件。</li>
+      <li>Teams 板块走微软官方接口（Microsoft Graph），同样是<strong>只读</strong>：只读你自己的邮件、日程、任务与聊天，不会修改、不会代发任何内容。</li>
+      <li>希悦课表走本机的浏览器会话读取，同样<strong>只读</strong>。</li>
+      <li>ManageBac 的密码（若你选择保存）存在 macOS 钥匙串里，只有当前用户能读；微软那边只存一个可随时吊销的授权令牌。</li>
+      <li><strong>看板自己不传任何数据</strong>：没有本项目的服务器，作业 / 成绩 / 课表一律只落在这台电脑上（<code>~/Library/Application Support/ManageBac 看板 Mac/</code>，在访达里按 ⌘⇧G 粘贴这个路径就能进去）。</li>
+      <li><strong>但灵析 AI 是例外，这一点要说清楚</strong>：你发给它的问题、以及随消息带上的文件 / 截图，会<strong>直接发送给 DeepSeek</strong>（就像你在网页版里聊天一样），由 DeepSeek 按其条款处理。所以<strong>不要把不想外传的东西丢给灵析 AI</strong>；其余四个分区的内容不会经过它。登录态（cookie）只存在这台电脑的网页存储里，随时可以在「账号管理」里退出清除。</li>
+      <li>断网时用上次抓到的数据继续显示，并标注「更新于 xx:xx」。</li>
+    </ul>
+  </div>
+
+  <h2><span class="n">8</span>遇到问题</h2>
+  <div class="card">
+    <table>
+      <tr><th>现象</th><th>怎么办</th></tr>
+      <tr><td>双击提示「无法验证开发者」</td><td>右键 →「打开」→「打开」。只需一次。</td></tr>
+      <tr><td>一直显示「登录已失效」</td><td>看板里重新登录一次 ManageBac；若学校有二次验证，登录窗里改用「用浏览器登录」。</td></tr>
+      <tr><td>灵析 AI 一直没反应 / 显示未登录</td><td>按顺序试：① 点「我已经登录好了」；② 点「重连」（重新加载登录页，<strong>不会掉登录</strong>）；③ 点「打开登录页」重登一次，或把 App 退掉重开。只要登录页里能正常输入，通道就是通的。</td></tr>
+      <tr><td>灵析 AI 问完一直空着</td><td>DeepSeek 偶尔会弹人机验证 —— 点「原站」把真实网页摊开，在页面上过掉验证再回来。</td></tr>
+      <tr><td>账号管理里 ManageBac / Teams / 希悦 一起变红</td><td>本机服务没起来。点右上角「<strong>重连</strong>」把它重新拉起来再查一遍；还不行就把 App 退掉重开。</td></tr>
+      <tr><td>Teams 里出现「需要管理员批准」</td><td>程序会自动换通道重试；若都失败，需要学校 IT 批准该客户端，属于租户策略。</td></tr>
+      <tr><td>菜单栏图标不见了</td><td>菜单栏太长被挤掉了：退出一些常驻图标，或把 App 重新打开一次（它是同一个 App 的图标，不再有单独的菜单栏 App）。</td></tr>
+      <tr><td>通知里冒出旧的成绩 / 同一条消息两份</td><td>已修：现在只有一个进程发通知，同一条消息只播一次，超过 4 天的新成绩、3 天前的 Teams 任务一律只记账不弹窗；同类一次超过 2 条会合并成一条。想立刻清空通知中心，点右侧的「清空已投递通知」。</td></tr>
+      <tr><td>数据看起来是旧的</td><td><span class="kbd">⌘</span>+<span class="kbd">R</span> 或点右上角刷新；也可以把自动刷新间隔调短。</td></tr>
+    </table>
+  </div>
+
+  <footer>ManageBac 看板 · macOS 版 · 作业 / 成绩 / 课表只留在这台 Mac 上（灵析 AI 的对话内容会发给 DeepSeek，见第 7 节）</footer>
+</div>
+</body>
+</html>

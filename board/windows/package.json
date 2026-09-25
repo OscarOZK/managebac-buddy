@@ -1,0 +1,18 @@
+{
+  "name": "managebac-board",
+  "productName": "ManageBac 看板",
+  "version": "3.0.0",
+  "description": "ManageBac 看板 · Windows 桌面版（托盘 + 原生窗口 + 独立抓取）",
+  "main": "main.js",
+  "author": "ManageBac 看板",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-packager . \"ManageBac看板\" --platform=win32 --arch=x64 --out=dist --overwrite --icon=assets/icon.ico --app-version=3.0.0 --win32metadata.CompanyName=ManageBacBoard --win32metadata.ProductName=\"ManageBac 看板\""
+  },
+  "devDependencies": {
+    "electron": "33.2.0",
+    "@electron/packager": "18.3.6"
+  }
+}

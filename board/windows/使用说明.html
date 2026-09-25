@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ManageBac 看板 · Windows 版使用说明</title>
+<style>
+  :root {
+    --accent: #0071e3;
+    --red: #ff3b30; --amber: #ff9f0a; --green: #34c759; --blue: #007aff;
+    --ink-1: #1d1d1f; --ink-2: #56565c; --ink-3: #86868b;
+    --line: rgba(0,0,0,.09); --line-soft: rgba(0,0,0,.055);
+    --card: rgba(255,255,255,.78); --card-hi: #fff;
+    --shadow: 0 1px 2px rgba(0,0,0,.05), 0 6px 18px -8px rgba(0,0,0,.16);
+    --font: "Segoe UI Variable Display", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ink-1: #f5f5f7; --ink-2: #b9b9c0; --ink-3: #8b8b93;
+      --line: rgba(255,255,255,.12); --line-soft: rgba(255,255,255,.07);
+      --card: rgba(30,30,36,.72); --card-hi: #1f1f25;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 22px -10px rgba(0,0,0,.7);
+    }
+    body { background: radial-gradient(1200px 600px at 20% -10%, #1b2333, #0c0c10 60%) fixed; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 40px 24px 72px;
+    font: 15px/1.75 var(--font); color: var(--ink-1);
+    background: radial-gradient(1200px 600px at 20% -10%, #eaf1fb, #f6f7fa 60%) fixed;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 780px; margin: 0 auto; }
+  header { margin-bottom: 26px; }
+  .kicker {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 4px 11px; border-radius: 999px; font-size: 12px; font-weight: 600;
+    color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent);
+    margin-bottom: 12px;
+  }
+  h1 { margin: 0 0 6px; font-size: 30px; letter-spacing: -.028em; font-weight: 700; }
+  .lede { margin: 0; color: var(--ink-2); font-size: 15.5px; }
+  h2 {
+    margin: 34px 0 12px; font-size: 19px; letter-spacing: -.02em;
+    display: flex; align-items: center; gap: 9px;
+  }
+  h2 .n {
+    flex: none; width: 25px; height: 25px; border-radius: 8px;
+    display: grid; place-items: center; font-size: 13px; font-weight: 700;
+    background: var(--accent); color: #fff;
+  }
+  .card {
+    background: var(--card); border: 1px solid var(--line-soft);
+    border-radius: 16px; padding: 20px 22px; box-shadow: var(--shadow);
+    backdrop-filter: blur(18px) saturate(160%);
+  }
+  .card + .card { margin-top: 12px; }
+  p { margin: 0 0 10px; }
+  p:last-child, ul:last-child { margin-bottom: 0; }
+  ul { margin: 0 0 10px; padding-left: 20px; }
+  li { margin: 4px 0; }
+  code {
+    font: 13px/1.5 "Cascadia Mono", Consolas, monospace;
+    background: rgba(127,127,127,.14); padding: 1.5px 6px; border-radius: 6px;
+  }
+  .kbd {
+    display: inline-block; min-width: 22px; text-align: center;
+    font: 600 12px/1.6 "Segoe UI", system-ui, sans-serif;
+    padding: 1px 6px; border-radius: 6px; margin: 0 1px;
+    background: var(--card-hi); border: 1px solid var(--line);
+    box-shadow: 0 1px 0 var(--line);
+  }
+  .steps { counter-reset: s; list-style: none; padding: 0; margin: 0; }
+  .steps li {
+    counter-increment: s; position: relative; padding-left: 34px; margin: 12px 0;
+  }
+  .steps li::before {
+    content: counter(s); position: absolute; left: 0; top: 1px;
+    width: 23px; height: 23px; border-radius: 50%;
+    display: grid; place-items: center; font-size: 12px; font-weight: 700;
+    background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent);
+  }
+  .tip {
+    display: flex; gap: 11px; align-items: flex-start;
+    border-left: 3px solid var(--accent); border-radius: 0 12px 12px 0;
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+    padding: 12px 16px; margin: 14px 0 0;
+  }
+  .tip.warn {
+    border-color: var(--amber);
+    background: color-mix(in srgb, var(--amber) 11%, transparent);
+  }
+  .tip b { flex: none; }
+  table { width: 100%; border-collapse: collapse; margin: 4px 0 0; font-size: 14px; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+  th { font-size: 12.5px; color: var(--ink-3); font-weight: 600; }
+  tr:last-child td { border-bottom: 0; }
+  td:first-child { white-space: nowrap; font-weight: 600; }
+  .dots { display: inline-flex; gap: 3px; vertical-align: middle; margin-right: 5px; }
+  .dots i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  footer { margin-top: 40px; color: var(--ink-3); font-size: 13px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="kicker">🪟 Windows 版 · 桌面常驻</div>
+    <h1>ManageBac 看板</h1>
+    <p class="lede">把 ManageBac 的作业截止、课表与成绩，做成一个常驻在系统托盘旁边的桌面看板。双击即用，不需要浏览器、不需要装 Python。</p>
+  </header>
+
+  <h2><span class="n">1</span>怎么打开</h2>
+  <div class="card">
+    <p>双击文件夹里的 <code>ManageBac 看板.exe</code>。</p>
+    <ul>
+      <li>第一次打开会弹出<strong>登录窗</strong>：输入一次 ManageBac 账号密码即可。想省事就勾上「在本机保存账号密码」，以后掉登录会自动重登。</li>
+      <li>如果学校账号有验证码或二次验证，点「用浏览器登录」，在弹出的窗口里自己登，登完关掉即可。</li>
+      <li>登录成功后，程序<strong>常驻系统托盘</strong>（右下角小图标）。关掉窗口不会退出，点托盘图标随时再打开。</li>
+    </ul>
+    <div class="tip">
+      <b>💡</b>
+      <div>建议右键 <code>ManageBac 看板.exe</code> →「发送到」→「桌面快捷方式」，以后从桌面一键开。</div>
+    </div>
+  </div>
+
+  <h2><span class="n">2</span>托盘图标在看什么</h2>
+  <div class="card">
+    <p>托盘图标就是「桌面版的菜单栏」：图标本身就是状态。</p>
+    <table>
+      <tr>
+        <th>角标样式</th><th>样子</th><th>含义</th>
+      </tr>
+      <tr>
+        <td>彩色圆点</td>
+        <td><span class="dots"><i style="background:#ff3b30"></i><i style="background:#ffcc00"></i><i style="background:#007aff"></i></span></td>
+        <td>右列依次是红 / 黄 / 蓝三档各有几项待办。一眼看出轻重缓急。</td>
+      </tr>
+      <tr>
+        <td>数字角标</td>
+        <td><span class="dots"><i style="background:#ff3b30"></i></span></td>
+        <td>红圈里的数字 = 红+黄+蓝合计（最多显示到 9，超过一律显示 9）。</td>
+      </tr>
+      <tr>
+        <td>仅图标</td>
+        <td>—</td>
+        <td>不带角标，最大程度安静。</td>
+      </tr>
+    </table>
+    <p style="margin-top:12px">鼠标悬停在托盘图标上，会显示<strong>精确数字</strong>（例如「红 3 项 · 黄 2 项 · 蓝 1 项」）。<br>
+    右键托盘图标是一份快捷菜单：打开看板、立即刷新、切主题、调角标样式、在浏览器打开 ManageBac、打开设置文件位置、退出。</p>
+    <p>窗口最小化时，任务栏图标上也会出现一个<strong>红色数字角标</strong>，这是 Windows 的原生习惯。</p>
+  </div>
+
+  <h2><span class="n">3</span>看板里的四个分区</h2>
+  <div class="card">
+    <ul>
+      <li><strong>待办</strong> —— 顶部是「距离最近一件事还有多久」的大倒计时（上课 / 下课 / 晚自习），下面四格是待完成、24 小时内、本周内、已出分；再往下按「越急越靠前」排的作业卡，卡左边的色条就是紧急度。</li>
+      <li><strong>课程</strong> —— 今天的课表 + 一整周的课表网格，按学科配色，换行就是一天。</li>
+      <li><strong>成绩</strong> —— GPA 总览环 + 各科明细，点任意一行看该科全部作业。</li>
+      <li><strong>设置</strong> —— 下面一整节都在讲它。</li>
+    </ul>
+    <p style="margin-top:12px">快捷键：<span class="kbd">Ctrl</span>+<span class="kbd">1</span>~<span class="kbd">4</span> 切分区、<span class="kbd">Ctrl</span>+<span class="kbd">R</span> 立即刷新、<span class="kbd">Esc</span> 关掉登录窗。顶部搜索框可以按学科或作业名过滤。</p>
+  </div>
+
+  <h2><span class="n">4</span>Teams 板块：连一次微软账号</h2>
+  <div class="card">
+    <p>侧边栏的 <strong>Teams</strong> 会把 Microsoft Teams / Outlook 里和学习有关的东西集中到一处：微软任务里的作业、邮件里提到的事（<strong>自动转成待办</strong>）、聊天里点名提到你的消息、以及未来两周的日程。所有内容<strong>只读</strong>，绝不回写你的微软账号。</p>
+
+    <h3 style="margin:16px 0 6px;font-size:14px">怎么连</h3>
+    <p>点「连接微软账号」→ 弹出浏览器 → 选你在学校的账号（会列出这台电脑上登录过的微软账号）→ 同意即完成。连一次就够了，之后凭据会自动续期，不用重复登录。</p>
+
+    <div class="tip">
+      <b>⚠️</b>
+      <div>如果浏览器里出现「<strong>需要管理员批准</strong>」，说明学校租户不接受该应用的权限申请。程序已经内置了多条通道：它会自动改用下一个客户端重试（进度会实时显示在卡片上）。若所有通道都被挡住，就需要学校 IT 管理员批准——这属于租户策略，无法在本地绕过。</div>
+    </div>
+
+    <h3 style="margin:16px 0 6px;font-size:14px">它申请了哪些权限</h3>
+    <p>只申请「普通用户自己能同意」的最小集合：读你自己的邮件、日程、Microsoft To Do 任务、Teams 聊天。带 <code>.All</code> 的（读别人数据）和仅管理员可授予的权限<strong>一律不申请</strong>。</p>
+
+    <h3 style="margin:16px 0 6px;font-size:14px">哪一条数据源没连上怎么办</h3>
+    <p>程序会按实际拿到的权限决定拉哪些源，缺权限的<strong>自动跳过</strong>，不会报错、不会刷屏。例如 Planner 需要管理员权限，若未获批就只显示 Microsoft To Do 里的任务，其余功能不受影响。</p>
+
+    <div class="tip">
+      <b>💡</b>
+      <div>想断开？卡片右下角有「断开连接」，本地令牌立刻清除，不会影响你的微软账号设置。</div>
+    </div>
+  </div>
+
+  <h2><span class="n">5</span>设置能改什么</h2>
+  <div class="card">
+    <p>设置页顶部有一条<strong>实时预览</strong>，改任何一项都会立刻反映在上面的预览、托盘角标和整个看板里。</p>
+    <table>
+      <tr><th>分组</th><th>可调项</th></tr>
+      <tr>
+        <td>外观与主题</td>
+        <td>主题（跟随系统 / 浅色 / 深色）、界面密度（紧凑 / 舒适 / 宽松）、圆角（直角 / 标准 / 圆润）、液态玻璃强度、字号缩放、减弱动效、降低透明度</td>
+      </tr>
+      <tr>
+        <td>强调色与学科配色</td>
+        <td>强调色 6 选 1 或自己取色；8 个学科每个都能单独改色；另有莫兰迪 / 鲜艳 / 沉稳三套预设一键换</td>
+      </tr>
+      <tr>
+        <td>待办紧急度阈值</td>
+        <td>红 / 黄 / 蓝三档的小时数用滑块调（默认 26 / 50 / 74 小时），上方色带实时预览分档；还能设「不显示的关键词」，把含这些字的作业过滤掉</td>
+      </tr>
+      <tr>
+        <td>刷新与启动</td>
+        <td>自动刷新间隔（1–60 分）、开机自动启动、托盘上显示哪几档、逾期是否计入、待办显示条数上限</td>
+      </tr>
+    </table>
+    <div class="tip">
+      <b>💡</b>
+      <div>改错了想恢复？设置页最下面有「恢复默认」。学科配色等所有设置都存在本机，不会上传到任何地方。</div>
+    </div>
+  </div>
+
+  <h2><span class="n">6</span>数据从哪来、隐私怎么算</h2>
+  <div class="card">
+    <ul>
+      <li>程序自带的浏览器内核会按你设定的间隔，用你登录的会话去读 ManageBac 的作业、课表与成绩，<strong>只读，不会替你提交任何东西</strong>。</li>
+      <li>Teams 板块走微软官方接口（Microsoft Graph），同样是<strong>只读</strong>：只读你自己的邮件、日程、任务与聊天，不会修改、不会代发任何内容。</li>
+      <li>登录状态由 Windows 自己保管，关掉再开还是登着的。</li>
+      <li>如果要保存密码，用的是 Windows 自带的加密（DPAPI），只有当前这台电脑的这个账户能解开。</li>
+      <li>所有数据都只落在这台电脑上，没有任何服务器、没有上传。</li>
+      <li>断网时用上次抓到的数据继续显示，会在角标旁标注「更新于 xx:xx」。</li>
+    </ul>
+  </div>
+
+  <h2><span class="n">7</span>遇到问题</h2>
+  <div class="card">
+    <table>
+      <tr><th>现象</th><th>怎么办</th></tr>
+      <tr>
+        <td>托盘图标不出现</td>
+        <td>Windows 11 会把不常用的图标收进「^」折叠区，点开把本程序拖到任务栏上即可常驻。也可以在「设置 → 个性化 → 任务栏 → 其他系统托盘图标」里打开。</td>
+      </tr>
+      <tr>
+        <td>一直显示「登录已失效」</td>
+        <td>在登录窗里重登一次；若学校有二次验证，改用「用浏览器登录」。也可以右键托盘图标 → 立即刷新重试。</td>
+      </tr>
+      <tr>
+        <td>数据不更新</td>
+        <td>右键托盘 → 立即刷新。若还不行，检查是否断网，或在设置里把自动刷新间隔调小。</td>
+      </tr>
+      <tr>
+        <td>想彻底退出</td>
+        <td>右键托盘图标 → 退出。只点窗口右上角的 × 只是收起窗口。</td>
+      </tr>
+      <tr>
+        <td>想搬走 / 备份</td>
+        <td>整个文件夹拷到别的 Windows 电脑就能用（建议在新电脑上重新登录一次）。</td>
+      </tr>
+    </table>
+    <div class="tip warn">
+      <b>⚠️</b>
+      <div>这是便携版程序，请保持文件夹内所有文件在一起，<strong>不要把 exe 单独拖出来</strong>，否则会打不开。</div>
+    </div>
+  </div>
+
+  <footer>ManageBac 看板 · Windows 版 v3.0 · 与 Mac 版同一套设计语言与设置项</footer>
+</div>
+</body>
+</html>

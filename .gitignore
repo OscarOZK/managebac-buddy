@@ -1,0 +1,137 @@
+# ============================================================================
+#  ManageBac 看板 · .gitignore
+#  ---------------------------------------------------------------------------
+#  这个仓库里同时住着**源码**和**使用者的真实数据**。这份文件的核心职责
+#  只有一句话：**只让源码进仓库，任何跟「我是谁、我的作业是什么」有关的东西
+#  一律留在本机。**
+#
+#  分四类，每一类都写清「为什么不能上传」—— 不然下次有人图省事
+#  把某一条注释掉，就可能把登录 Cookie 推进公开历史里，而 Git 的历史
+#  是删不干净的（只能改写历史，那已经是事故处理了）。
+# ============================================================================
+
+
+# ---------------------------------------------------------------------------
+#  ① 凭据与登录态 —— 泄露即「别人可以拿你的身份登录」
+# ---------------------------------------------------------------------------
+#  credentials.json / session.json 里的 Cookie 等同于密码：拿到就能直接登进
+#  ManageBac，不需要二次验证。.teams-session 里是 Microsoft 的 UPN 与 token。
+credentials.json
+session.json
+session_state.json
+.seiue-session
+.teams-session
+
+#  推送中转的 token 与 topic —— 拿到就能收发你的推送
+relay.json
+relay.json.bak-*
+relay/config.json
+relay-quota.json
+
+#  使用者档案（姓名），以及设置（含隐藏关键词、学科配色等个人偏好）
+ec.json
+settings.json
+settings.json.bak-*
+
+#  其他一切本地配置备份
+*.bak-*
+*.bak
+
+
+# ---------------------------------------------------------------------------
+#  ② 浏览器 profile —— 内含完整 Cookie 与凭据库，体积也极大
+# ---------------------------------------------------------------------------
+#  这些目录是「登录态持久化」的产物，里面除了 Cookie 还有 Chrome 的
+#  Login Data（系统凭据加密的账号密码表）。**绝对不能上传**。
+managebac-profile/
+seiue-profile/
+teams-profile/
+seiue-downloads/
+chrome/
+
+
+# ---------------------------------------------------------------------------
+#  ③ 抓取到的学生真实数据 —— 作业、成绩、课表、名单
+# ---------------------------------------------------------------------------
+#  taskcache/ 是逐条作业的缓存（标题、截止时间、所属班级 id）；
+#  teams_cache.json 是 Teams 消息；notify-state.json 是已推送记录。
+taskcache/
+cache.json
+teams_cache.json
+notify-state.json
+notify/
+*.log
+
+#  课表：使用说明里明确写了「课表不随 App 一起发出去，它只属于你」。
+#  这台机器上的 timetable.json 里有真实教师姓名与教室号，必须排除。
+timetable.json
+gradetimes.json
+prefetch.json
+
+#  EC Roster（课外活动名单，含其他同学的真实姓名）
+ec/
+
+#  课表 PDF 原件与预览图
+schedule.pdf
+课表-新版.pdf
+preview/
+source/
+
+#  ★ 例外：docs/demo-data/ 必须放行 ★
+#  上面那几条（cache.json / timetable.json / settings.json / notify-state.json）
+#  是**无锚点文件名**，会匹配任意目录 —— 于是 README 依赖的那份演示数据
+#  也被一并挡掉了。后果很隐蔽：本机看不出问题（文件都还在），
+#  但仓库里根本没有它们，别人 clone 下来跑 shoot-readme.sh 就会失败。
+#
+#  git 的规则是「后面的模式覆盖前面的」，所以放在这里用 ! 反向放行即可。
+#  （前提是父目录 docs/demo-data/ 本身没被排除 —— 它确实没被排除。）
+#
+#  为什么这份数据可以进仓库：它全部由 tools/make-demo-cache.py 生成，
+#  里面每一个字都是编的 —— 虚构的科目名、作业标题、成绩、教师姓名、
+#  教室号、邮件发件人。它是**演示样本**，不是任何人的真实数据。
+!docs/demo-data/
+!docs/demo-data/**
+!docs/demo-cache.json
+
+
+# ---------------------------------------------------------------------------
+#  ④ 构建产物与依赖 —— 体积大、可重建，不该进仓库
+# ---------------------------------------------------------------------------
+#  ★ 这里必须用 `**`（匹配任意层目录），不能只写 `board/*/build/` ★
+#  实际路径是 `board/mac/Dashboard/build/` —— 中间还夹着一层 `Dashboard`。
+#  只写一层通配的话，那个 12.8 MB 的 MBDashboard 二进制会被静静地加进仓库
+#  （`git add` 不会报错，只是体积莫名其妙大了 20 MB）。
+board/**/build/
+menubar/**/build/
+board/windows/node_modules/
+board/windows/dist/
+_build_old/
+
+#  Python
+__pycache__/
+*.py[cod]
+
+#  「限时主题」的原图（2.6 MB）。**故意排除**：它们是设计素材、不属于代码，
+#  而且构建脚本会把 ~/.mbboard/themes 整个拷进 App 包。
+#  需要的话按 themes/<id>/*.jpg 的结构自备即可。
+themes/
+
+#  手工编译出的 pdfscale 二进制（源码是 pdfscale.swift，可重建）
+/pdfscale
+
+#  截图的中间产物：docs/images/notify/ 是 99 张原始通知图标（3.9 MB），
+#  它是 notify-matrix.png / notify-samples.png 这两张拼图的原料。
+#  README 里只用拼图，原料每次重跑 shoot-readme.sh 都会重新生成 ——
+#  没必要把它一起背进 git 历史。
+docs/images/notify/
+
+
+# ---------------------------------------------------------------------------
+#  ⑤ 编辑器 / 系统垃圾
+# ---------------------------------------------------------------------------
+.DS_Store
+**/.DS_Store
+._*
+.!*
+*~
+*.swp

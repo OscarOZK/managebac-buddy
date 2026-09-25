@@ -1,0 +1,183 @@
+{
+  "1": [
+    {
+      "from": 1,
+      "to": 1,
+      "subject": "Pre-Calculus",
+      "room": "A201",
+      "teacher": "Ms. Rivera",
+      "mode": "走班",
+      "color": "math"
+    },
+    {
+      "from": 2,
+      "to": 3,
+      "subject": "English Language Arts",
+      "room": "A105",
+      "teacher": "Mr. Dawson",
+      "mode": "走班",
+      "color": "ela"
+    },
+    {
+      "from": 4,
+      "to": 4,
+      "subject": "Geography",
+      "room": "A310",
+      "teacher": "Mr. Okafor",
+      "mode": "走班",
+      "color": "geo"
+    },
+    {
+      "from": 5,
+      "to": 5,
+      "subject": "Physics",
+      "room": "B204",
+      "teacher": "Dr. Lindqvist",
+      "mode": "走班",
+      "color": "phys"
+    },
+    {
+      "from": 6,
+      "to": 6,
+      "subject": "语文",
+      "room": "A108",
+      "teacher": "李老师",
+      "mode": "走班",
+      "color": "chinese"
+    }
+  ],
+  "2": [
+    {
+      "from": 1,
+      "to": 2,
+      "subject": "Chemistry",
+      "room": "B101",
+      "teacher": "Ms. Haddad",
+      "mode": "走班",
+      "color": "chem"
+    },
+    {
+      "from": 3,
+      "to": 4,
+      "subject": "Pre-Calculus",
+      "room": "A201",
+      "teacher": "Ms. Rivera",
+      "mode": "走班",
+      "color": "math"
+    },
+    {
+      "from": 5,
+      "to": 5,
+      "subject": "Interdisciplinary",
+      "room": "C002",
+      "teacher": "Mr. Bennett",
+      "mode": "走班",
+      "color": "ids"
+    }
+  ],
+  "3": [
+    {
+      "from": 1,
+      "to": 2,
+      "subject": "Biology",
+      "room": "B303",
+      "teacher": "Dr. Nakamura",
+      "mode": "走班",
+      "color": "bio"
+    },
+    {
+      "from": 3,
+      "to": 4,
+      "subject": "English Language Arts",
+      "room": "A105",
+      "teacher": "Mr. Dawson",
+      "mode": "走班",
+      "color": "ela"
+    },
+    {
+      "from": 5,
+      "to": 6,
+      "subject": "Physics",
+      "room": "B204",
+      "teacher": "Dr. Lindqvist",
+      "mode": "走班",
+      "color": "phys"
+    }
+  ],
+  "4": [
+    {
+      "from": 1,
+      "to": 1,
+      "subject": "Pre-Calculus",
+      "room": "A201",
+      "teacher": "Ms. Rivera",
+      "mode": "走班",
+      "color": "math"
+    },
+    {
+      "from": 2,
+      "to": 3,
+      "subject": "Chemistry",
+      "room": "B101",
+      "teacher": "Ms. Haddad",
+      "mode": "走班",
+      "color": "chem"
+    },
+    {
+      "from": 4,
+      "to": 5,
+      "subject": "Geography",
+      "room": "A310",
+      "teacher": "Mr. Okafor",
+      "mode": "走班",
+      "color": "geo"
+    },
+    {
+      "from": 6,
+      "to": 6,
+      "subject": "语文",
+      "room": "A108",
+      "teacher": "李老师",
+      "mode": "走班",
+      "color": "chinese"
+    }
+  ],
+  "5": [
+    {
+      "from": 1,
+      "to": 1,
+      "subject": "Biology",
+      "room": "B303",
+      "teacher": "Dr. Nakamura",
+      "mode": "走班",
+      "color": "bio"
+    },
+    {
+      "from": 2,
+      "to": 2,
+      "subject": "English Language Arts",
+      "room": "A105",
+      "teacher": "Mr. Dawson",
+      "mode": "走班",
+      "color": "ela"
+    },
+    {
+      "from": 3,
+      "to": 4,
+      "subject": "Interdisciplinary",
+      "room": "C002",
+      "teacher": "Mr. Bennett",
+      "mode": "走班",
+      "color": "ids"
+    },
+    {
+      "from": 5,
+      "to": 5,
+      "subject": "Physics",
+      "room": "B204",
+      "teacher": "Dr. Lindqvist",
+      "mode": "走班",
+      "color": "phys"
+    }
+  ]
+}
