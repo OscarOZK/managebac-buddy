@@ -107,6 +107,8 @@ struct RenderCheck {
             case "--date":    dateOverride = nextVal()
             case "--moon":    forceMoonNotice = true
             case "--nomoon":  forceMoonSeen = true
+            case "--splash":  PreviewFlags.splashAt = Double(nextVal())
+            case "--hello":   PreviewFlags.helloT = Double(nextVal())
             case "--autodrag": PreviewFlags.autoDrag = true
             case "--still":   PreviewFlags.still = true
             case "--drag":
@@ -285,9 +287,17 @@ struct RenderCheck {
             app.setActivationPolicy(.accessory)
 
             let h: CGFloat = height ?? 838
+            // --live 也支持把首启两幕放进真窗口跑（--section splash / hello），
+            // 逐帧比对能证明「动画真的在动」，这是 ImageRenderer 一帧定生死
+            // 永远证不了的事。
+            let liveRoot: AnyView
+            switch section {
+            case "splash": liveRoot = AnyView(SplashView(onDone: { }).environmentObject(s))
+            case "hello":  liveRoot = AnyView(HelloGreeting(onStart: { }).environmentObject(s))
+            default:       liveRoot = AnyView(DashRoot(store: store))
+            }
             let host = NSHostingView(rootView: AnyView(
-                DashRoot(store: store)
-                    .environmentObject(s)
+                liveRoot
                     .environment(\.colorScheme, scheme)
                     .environment(\.mbRenderMode, true)
                     .frame(width: width, height: h, alignment: .top)
@@ -409,6 +419,20 @@ struct RenderCheck {
                     .environment(\.colorScheme, scheme)
                     .environment(\.mbRenderMode, true)
                     .frame(width: width, height: height, alignment: .top)
+            )
+        } else if section == "splash" {
+            // 首启快闪动画：配 --splash <秒> 冻在任意一帧逐张核对分镜
+            view = AnyView(
+                SplashView(onDone: { })
+                    .environmentObject(s)
+                    .frame(width: width, height: height ?? 838, alignment: .center)
+            )
+        } else if section == "hello" {
+            // 彩虹 hello：配 --hello <0…1> 冻在某个书写进度
+            view = AnyView(
+                HelloGreeting(onStart: { })
+                    .environmentObject(s)
+                    .frame(width: width, height: height ?? 838, alignment: .center)
             )
         } else if panel {
             // --panel：把菜单栏小面板整块画出来（离屏只能看布局/文案，玻璃质感看不到）

@@ -851,6 +851,12 @@ enum PreviewFlags {
     /// 云在飘、灯在升、花瓣在落，两张分别渲染的图逐像素一减，
     /// 差异里九成是动画噪声，真正要看的那个位移反而淹在里面。
     static var still = false
+    /// `--splash <秒>`：把首启快闪动画冻结在第 t 秒。
+    /// 动画的每一帧都是 t 的纯函数（乱码的随机种子也是 tick 序号），
+    /// 所以冻在任意 t 出来的静帧和真机那一瞬间完全一致。
+    static var splashAt: Double? = nil
+    /// `--hello <0…1>`：把彩虹 hello 冻结在某个书写进度（0 未落笔，1 写满）。
+    static var helloT: Double? = nil
 }
 
 /// 玻璃强度 → 材质的落点。设置里可调，真实影响观感。

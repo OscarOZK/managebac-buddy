@@ -47,7 +47,7 @@ if [ "$NEED" -eq 1 ]; then
     "$SRC/Dashboard/DashClasses.swift" "$SRC/Dashboard/DashGrades.swift" \
     "$SRC/Dashboard/DashTeams.swift" "$SRC/Dashboard/SettingsSection.swift" \
     "$SRC/Dashboard/SettingsAccounts.swift" "$SRC/Dashboard/DashAI.swift" \
-    "$SRC/Dashboard/Onboarding.swift" "$SRC/Dashboard/MainWindow.swift" "$SRC/Dashboard/RenderCheck.swift" \
+    "$SRC/Dashboard/Onboarding.swift" "$SRC/Dashboard/FirstRun.swift" "$SRC/Dashboard/MainWindow.swift" "$SRC/Dashboard/RenderCheck.swift" \
     "$SRC/MenuBar/Panel.swift"
 fi
 

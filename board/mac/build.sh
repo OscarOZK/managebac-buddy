@@ -30,7 +30,7 @@ DASH=(
   "$SRC/Dashboard/DashClasses.swift" "$SRC/Dashboard/DashGrades.swift"
   "$SRC/Dashboard/DashTeams.swift" "$SRC/Dashboard/DashAI.swift"
   "$SRC/Dashboard/SettingsSection.swift" "$SRC/Dashboard/SettingsAccounts.swift"
-  "$SRC/Dashboard/Onboarding.swift" "$SRC/Dashboard/MainWindow.swift"
+  "$SRC/Dashboard/Onboarding.swift" "$SRC/Dashboard/FirstRun.swift" "$SRC/Dashboard/MainWindow.swift"
 )
 # 菜单栏面板不再是独立 App，而是主 App 的一部分（MenuBar/App.swift 里只有 PanelController）
 MENUBAR=("$SRC/MenuBar/App.swift" "$SRC/MenuBar/Panel.swift")

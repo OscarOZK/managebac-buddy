@@ -55,6 +55,10 @@ struct MBApp: App {
             Group {
                 if settings.onboarded {
                     DashRoot(store: store)
+                } else if !UserDefaults.standard.bool(forKey: FirstRunFlow.seenKey) {
+                    // 真·第一次打开：先演快闪 + 彩虹 hello，点「让我们开始吧」进引导。
+                    // （从设置里重跑向导不算 —— 那种时候直接进引导，别再演一遍。）
+                    FirstRunFlow(onboarding: OnboardingView(onFinish: { }))
                 } else {
                     // 首次使用：先走引导，配好再进看板
                     OnboardingView(onFinish: { })
