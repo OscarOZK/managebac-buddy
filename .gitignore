@@ -119,6 +119,16 @@ themes/
 #  手工编译出的 pdfscale 二进制（源码是 pdfscale.swift，可重建）
 /pdfscale
 
+#  中秋祝福壁纸的 HTML 源文件（同样是个人用途，不上传）。
+tools/moon-greeting/
+
+#  朋友圈宣传长图的 HTML / CSS / SVG 源文件。
+#  用户明确要求「只是用来在朋友圈上宣传，不需要放到 GitHub 上」——
+#  成品图在桌面独立文件夹里，这里只留一份源码方便日后改文案。
+#  注意只用 tools/promo/ 这一层（带斜杠），别写成 promo/ —— 那会匹配到
+#  任何叫 promo 的目录。
+tools/promo/
+
 #  htmlshot 也是手工编译的（源码是 tools/htmlshot.swift）。
 #  它是把本地 HTML 渲染成 PNG 的小工具 —— 用来生成 README 顶部那张
 #  下载横幅和安装导览图（Chrome headless 在本机会被 SIGTERM 掉，改用
