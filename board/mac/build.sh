@@ -7,7 +7,11 @@ set -e
 SRC="${MBBOARD_SRC:-$HOME/.mbboard/board/mac}"
 THEMES="${MBBOARD_THEMES:-$HOME/.mbboard/themes}"
 BACKEND="${MBBOARD_BACKEND:-$HOME/.mbboard}"
-OUT="${MBBOARD_OUT:-$HOME/Desktop/ManageBac 看板 For Mac}"
+OUT="${MBBOARD_OUT:-$HOME/Desktop/ManageBac-Dashboard}"
+# ★ App 名要和 Info.plist 的 CFBundleName / CFBundleDisplayName 一致 ★
+# 三处都叫 ManageBac-Dashboard，Gatekeeper 弹窗和「隐私与安全性」里
+# 显示的才是这个名字 —— 安装导览照着屏幕写的，不能对不上。
+APPNAME="ManageBac-Dashboard"
 TARGET="arm64-apple-macos26.0"
 SWIFTC="/usr/bin/xcrun swiftc"
 
@@ -56,7 +60,7 @@ echo "③ 组包…"
 sleep 0.5
 mkdir -p "$OUT"
 
-APP="$OUT/ManageBac 看板.app"
+APP="$OUT/$APPNAME.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp -f "$SRC/Dashboard/build/MBDashboard" "$APP/Contents/MacOS/MBDashboard"
 cp -f "$SRC/Dashboard/build/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"

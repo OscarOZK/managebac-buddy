@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>ManageBac 看板 · Mac 版使用说明</title>
+<title>ManageBac-Dashboard · Mac 版使用说明</title>
 <style>
   :root {
     --accent: #0071e3;
@@ -87,7 +87,7 @@
 <div class="wrap">
 
   <header>
-    <div class="kicker">🧪 ManageBac 看板 · macOS 版</div>
+    <div class="kicker">🧪 ManageBac-Dashboard</div>
     <h1>使用说明</h1>
     <p class="sub">作业、课表、成绩、Teams 学习待办，加一个能直接问的 AI · 适配 macOS 26 液态玻璃</p>
   </header>
@@ -95,7 +95,7 @@
   <h2><span class="n">1</span>一个 App，两个入口</h2>
   <div class="card">
     <ul>
-      <li><strong>ManageBac 看板.app</strong> —— 唯一的 App。双击打开完整看板窗口。</li>
+      <li><strong>ManageBac-Dashboard.app</strong> —— 唯一的 App。双击打开完整看板窗口。</li>
       <li><strong>菜单栏图标</strong> —— 同一个 App 常驻菜单栏，点图标看今天的作业与倒计时；关掉主窗口它也还在（真退出走菜单栏面板里的「退出」或 <span class="kbd">⌘</span>+<span class="kbd">Q</span>）。</li>
       <li>以前是「看板 + 菜单栏」两个 App，已合并成一个：一个进程、一份数据、一份通知——不会再有同一条消息弹两遍、或者旧成绩反复冒出来的情况。</li>
     </ul>
@@ -201,7 +201,7 @@
       <li>Teams 板块走微软官方接口（Microsoft Graph），同样是<strong>只读</strong>：只读你自己的邮件、日程、任务与聊天，不会修改、不会代发任何内容。</li>
       <li>希悦课表走本机的浏览器会话读取，同样<strong>只读</strong>。</li>
       <li>ManageBac 的密码（若你选择保存）存在 macOS 钥匙串里，只有当前用户能读；微软那边只存一个可随时吊销的授权令牌。</li>
-      <li><strong>看板自己不传任何数据</strong>：没有本项目的服务器，作业 / 成绩 / 课表一律只落在这台电脑上（<code>~/Library/Application Support/ManageBac 看板 Mac/</code>，在访达里按 ⌘⇧G 粘贴这个路径就能进去）。</li>
+      <li><strong>看板自己不传任何数据</strong>：没有本项目的服务器，作业 / 成绩 / 课表一律只落在这台电脑上（<code>~/Library/Application Support/ManageBac-Dashboard/</code>，在访达里按 ⌘⇧G 粘贴这个路径就能进去）。</li>
       <li><strong>但灵析 AI 是例外，这一点要说清楚</strong>：你发给它的问题、以及随消息带上的文件 / 截图，会<strong>直接发送给 DeepSeek</strong>（就像你在网页版里聊天一样），由 DeepSeek 按其条款处理。所以<strong>不要把不想外传的东西丢给灵析 AI</strong>；其余四个分区的内容不会经过它。登录态（cookie）只存在这台电脑的网页存储里，随时可以在「账号管理」里退出清除。</li>
       <li>断网时用上次抓到的数据继续显示，并标注「更新于 xx:xx」。</li>
     </ul>
@@ -223,7 +223,7 @@
     </table>
   </div>
 
-  <footer>ManageBac 看板 · macOS 版 · 作业 / 成绩 / 课表只留在这台 Mac 上（灵析 AI 的对话内容会发给 DeepSeek，见第 7 节）</footer>
+  <footer>ManageBac-Dashboard · 作业 / 成绩 / 课表只留在这台 Mac 上（灵析 AI 的对话内容会发给 DeepSeek，见第 7 节）</footer>
 </div>
 </body>
 </html>

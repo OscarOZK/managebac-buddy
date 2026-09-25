@@ -2,10 +2,16 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- ★ 这两个必须和 build.sh 里的 APPNAME 一致 ★
+	     Gatekeeper 拦下来时弹的那句「未打开 "XXX"」、以及
+	     「系统设置 → 隐私与安全性」里「已阻止 "XXX" 以保护 Mac」，
+	     用的就是这里。安装导览里写的软件名必须和屏幕上出现的完全一致，
+	     差一个字使用者就会怀疑自己找错了地方。
+	     （bundle 目录名也一并叫 ManageBac-Dashboard，三处统一。） -->
 	<key>CFBundleName</key>
-	<string>ManageBac 看板</string>
+	<string>ManageBac-Dashboard</string>
 	<key>CFBundleDisplayName</key>
-	<string>ManageBac 看板</string>
+	<string>ManageBac-Dashboard</string>
 	<key>CFBundleExecutable</key>
 	<string>MBDashboard</string>
 	<key>CFBundleIconFile</key>

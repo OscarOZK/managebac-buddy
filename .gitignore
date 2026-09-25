@@ -119,6 +119,12 @@ themes/
 #  手工编译出的 pdfscale 二进制（源码是 pdfscale.swift，可重建）
 /pdfscale
 
+#  htmlshot 也是手工编译的（源码是 tools/htmlshot.swift）。
+#  它是把本地 HTML 渲染成 PNG 的小工具 —— 用来生成 README 顶部那张
+#  下载横幅和安装导览图（Chrome headless 在本机会被 SIGTERM 掉，改用
+#  系统自带的 WebKit）。二进制约 90 KB，源码在，随时能重建。
+tools/htmlshot
+
 #  截图的中间产物：docs/images/notify/ 是 99 张原始通知图标（3.9 MB），
 #  它是 notify-matrix.png / notify-samples.png 这两张拼图的原料。
 #  README 里只用拼图，原料每次重跑 shoot-readme.sh 都会重新生成 ——
