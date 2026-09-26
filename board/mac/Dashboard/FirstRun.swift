@@ -1286,29 +1286,27 @@ struct FirstRunFlow: View {
     @State private var stage: Stage
     /// 第三幕进场：blur + 缩放 + 透明度三件套一起缓过来
     @State private var enterOnboard = false
-    /// 传进来的「跳过开场」意图。只在 init 里用来算初始幕，另外日志里要用；
-    /// 挂在 View 上之后就算变了也不理会（舞台由 @State 说话）。
-    private let skipGreeting: Bool
+    /// 这次要不要演开幕（MB Buddy 快闪 → 彩虹 hello）
+    private let playIntro: Bool
+    /// 开幕走完之后，要不要接上新手导览。
+    /// `false` 的情形就是「导览早走完了、但这一版的开幕还没演」——
+    /// 用户装了个新版本第一次打开，想看的是那段开场，不是再被问一遍英语名。
+    private let thenOnboard: Bool
 
     enum Stage { case splash, hello, onboard, dash }
 
-    init(skipGreeting: Bool = false) {
-        // 初始幕直接算好，别等 onAppear 再改 —— 否则「减弱动态」的用户
+    init(playIntro: Bool, thenOnboard: Bool) {
+        // 初始幕在 init 里就算好，别等 onAppear 再改 —— 否则「减弱动态」的用户
         // 会先闪到一帧快闪画面。Motion.reduced 是静态可读的，init 里就能判。
-        //
-        // ★ 一律从头演（快闪 → hello）★
-        //   正常挂出这个 View 只有两种情形 —— 首次打开、从菜单重走新手导览 ——
-        //   两种都该完整演一遍，所以默认就是从头。
-        //
-        //   唯一的例外是 skipGreeting：用户**已经看过**这段开场，但新手导览
-        //   没走完就退出了。这时再从头演一遍动画是用户明确不要的
-        //   （「退出应用后台重新进 APP，不需要再有任何动画」），
-        //   但又不能把该走的引导吞掉（英语名没填，EC 名单会对不上），
-        //   所以直接落到第三幕，接上没走完的那段导览。
-        _stage = State(initialValue: skipGreeting
-                       ? .onboard
-                       : (Motion.reduced ? .hello : .splash))
-        self.skipGreeting = skipGreeting
+        let first: Stage
+        if playIntro {
+            first = Motion.reduced ? .hello : .splash
+        } else {
+            first = thenOnboard ? .onboard : .dash
+        }
+        _stage = State(initialValue: first)
+        self.playIntro = playIntro
+        self.thenOnboard = thenOnboard
     }
 
     var body: some View {
@@ -1329,10 +1327,11 @@ struct FirstRunFlow: View {
                     // 「想要访问您的下载文件夹」授权框，正好盖在这段动画上。
                     // 用户的要求就是「这种弹窗都要放到点了这个按钮之后」。
                     Task { await Bridge.ready() }
-                    // 「让我们开始吧」一律进新手导览。导览走完由 onFinish
-                    // 切到看板 —— 不依赖 settings.onboarded 的变化，
-                    // 否则「已经配好过」的用户再走一遍会卡在导览里出不去。
-                    stage = .onboard
+                    // 「让我们开始吧」之后去哪，由 thenOnboard 说话：
+                    // 导览早走完的人直接进看板（他这次只是来看开幕的），
+                    // 没走完的人接上导览。不依赖 settings.onboarded 的变化 ——
+                    // 否则「已经配好过」的用户会卡在导览里出不去。
+                    stage = thenOnboard ? .onboard : .dash
                 }
 
             case .onboard:
@@ -1352,20 +1351,25 @@ struct FirstRunFlow: View {
             }
         }
         .onAppear {
-            // ★ 这台机器已经进过开场了 ★
-            //   一露面就置位，不是等演完再置 —— 用户要的语义是
+            // ★ 这一版的开幕演出，到此为止已经放过了 ★
+            //   写的是**版本号**，不是 Bool。
+            //   一露面就写、不等演完 —— 用户要的语义是
             //   「只有下载完**首次进 APP** 才有这两个动画」，
             //   「首次」指第一次打开 App，而不是「完整看完这段动画」。
             //   于是哪怕用户第一秒就把 App 关掉，下次进来也是直进首页，
             //   不会「退出重进又演一遍」。
-            //   想看回来：菜单「重新运行首次配置向导」/ 设置页「开始引导」
-            //   —— 那两处会把 onboarded 与 introPlayed 一起清掉。
-            settings.introPlayed = true
+            //   而下次**换版本**装上来时版本号不相等，会再演一次 —— 那正是
+            //   用户期望的「装了新版第一次打开」。
+            //   想看回来：菜单「重新运行首次配置向导」/ 设置页那两个入口。
+            if playIntro {
+                settings.introVersion = BoardSettings.appVersion
+            }
             // 落一行日志：以后有人问「怎么又演动画了 / 怎么没演」，
             // 对着 /tmp/mbboard-mac.log 一眼就知道走的是哪一支。
-            Log.write("开场演出："
-                      + (skipGreeting ? "跳过（之前进过）→ 直接接上新手导览"
-                                      : "从头演（快闪 → hello）"))
+            Log.write("开幕演出："
+                      + (playIntro ? "从头演（快闪 → hello）"
+                                   : "跳过（这一版已经放过）")
+                      + (thenOnboard ? " → 接上新手导览" : " → 直进看板"))
         }
     }
 }

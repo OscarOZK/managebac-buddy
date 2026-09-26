@@ -132,6 +132,34 @@ struct SettingsSection: View {
             rowLine
             HStack(spacing: env.space(12)) {
                 VStack(alignment: .leading, spacing: 2) {
+                    Text("再看一次开场动画")
+                        .font(.system(size: 13.5, weight: .medium))
+                        .foregroundStyle(Theme.ink(scheme))
+                    Text("只把 MB Buddy 快闪与彩虹 hello 放一遍；导览与档案都不动")
+                        .font(.system(size: 11.5)).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: env.space(10))
+                Button {
+                    // 只投这一枚信号，**不碰** onboarded / introVersion ——
+                    // MBApp 收到就把冻结的启动分流换成「只演开幕」那一支。
+                    settings.requestFlowRestart(.introOnly)
+                } label: {
+                    Text("重演")
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(env.accent.color(scheme, lift: 0.06))
+                        .padding(.horizontal, 14).frame(height: 28)
+                        .contentShape(RoundedRectangle(cornerRadius: env.radius(Radius.sm), style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .card(env.radius(Radius.sm),
+                      tint: env.accent.color(scheme, lift: 0.86, opacity: scheme == .dark ? 0.16 : 0.12),
+                      look: env.look, shadow: false)
+            }
+            .settingsRowPadding(env)
+            rowLine
+            HStack(spacing: env.space(12)) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text("重新走一遍新手引导")
                         .font(.system(size: 13.5, weight: .medium))
                         .foregroundStyle(Theme.ink(scheme))
@@ -141,13 +169,15 @@ struct SettingsSection: View {
                 }
                 Spacer(minLength: env.space(10))
                 Button {
-                    // 两个标记一起清 —— introPlayed 不清的话，引导会接上，
-                    // 但开场那两幕（MB Buddy 快闪 + 彩虹 hello）不会演，
-                    // 而「重走新手导览也会触发」是用户明确要的。
-                    withAnimation(Motion.spring(0.36)) {
-                        settings.onboarded = false
-                        settings.introPlayed = false
-                    }
+                    // 三件事一起做：
+                    //   onboarded = false    → 接回新手导览
+                    //   introVersion = ""    → 清空 = 开幕重演（空串永远不等于当前
+                    //                          版本号，比清一个 Bool 更不容易出岔）
+                    //   flowRestart          → 把上面两件事告诉 MBApp，当场换幕。
+                    //                          启动分流是冻结的，光改标记界面不会动。
+                    settings.onboarded = false
+                    settings.introVersion = ""
+                    settings.requestFlowRestart(.fullGuide)
                 } label: {
                     Text("开始引导")
                         .font(.system(size: 12.5, weight: .semibold))

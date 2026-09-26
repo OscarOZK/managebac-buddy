@@ -123,6 +123,23 @@ final class BoardSettings: ObservableObject {
         return dir.appendingPathComponent("settings.json")
     }
 
+    /* ---------------- 版本号：开幕演出「演过哪一版」的判据 ----------------
+
+       introVersion 里存的就是这个字符串。所以它必须**稳定、且每个版本都不同** ——
+       build 脚本把 Info.plist 的 CFBundleShortVersionString 写成 3.5，
+       这里读到的就是这个值。
+
+       拿不到时留空串。空串会让「没演过」（introVersion 也是空）和「当前版本」
+       撞成相等 —— 也就是把「从没演过」误判成「这一版演过了」，
+       恰好是最不该出的错。所以 LaunchPlan.decide 额外要求非空才算看过。 */
+    static let appVersion: String =
+        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? ""
+
+    /// 「演过，但不知道是在哪一版演的」—— 老 settings.json 里那个 Bool 式的
+    /// introPlayed=true 就翻译成它。故意用一个不可能等于任何真实版本号的字面量，
+    /// 于是它永远判成「这一版还没看过」，老用户升上来会补演一次。
+    static let legacyIntro = "≤3.0"
+
     /* ---------------- ⓪ 使用者档案（首次使用会问，之后可改） ----------------
        这一条很关键：**名字绝不能写死在代码里**。
        EC 名单是按**英语名**匹配的，所以首次启动必须问到真实英语名，
@@ -133,21 +150,60 @@ final class BoardSettings: ObservableObject {
     @Published var gradeLabel: String = "G10"    { didSet { save() } }
     /// 是否走完了首次引导
     @Published var onboarded: Bool = false       { didSet { save() } }
-    /* ---------------- 开场演出（快闪 + 彩虹 hello）是否已经放过 ----------------
-       与 onboarded 是**两件事**，不能合并：
-         · onboarded    = 「新手导览走完了没有」—— 是**功能**上的状态
-                          （英语名填了没、希悦连了没、主题选了没）。
-         · introPlayed  = 「这台机器上的这段开场动画放过了没有」—— 是**演出**上的状态。
-       只用一个 onboarded 会漏掉一种情况：用户看完了动画、导览走到一半就 ⌘Q，
-       下次进来 onboarded 还是 false —— 于是**刚看过的动画又从头演一遍**。
-       用户的要求是「下载完首次进 APP 才演，退出重进就不再演」，所以另立这个标记。
+    /* ---------------- 开幕演出（MB Buddy 快闪 + 彩虹 hello）演过哪一版 ----------------
 
-       写入时机：FirstRunFlow 一露面就置 true（见 FirstRun.swift）。
-       也就是「这台机器已经进过开场了」，哪怕用户第 1 秒就关掉 ——
+       这里存的是「**哪一个版本**的开幕演出已经放过了」，不是一个 Bool。
+       这两个标记各管一件事，缺一个都有洞：
+         · onboarded    = 「新手导览走完了没有」—— **功能**状态
+                          （英语名填了没、希悦连了没、主题选了没）。
+         · introVersion = 「这把开幕演出是在哪一版上放过的」—— **演出**状态。
+
+       为什么必须是版本号 —— 这正是用户报的那只 bug：
+       用户在用 3.0，走完了导览（onboarded=true），也早就演过 3.0 的开幕。
+       这时装了 3.5、第一次打开 —— 如果演出状态只是个 Bool，
+       那它早就是 true 了，于是**新版第一次打开一帧动画都不放**。
+       而用户的期待恰恰相反：装了一个新版本、第一次打开，本该看到这段开场。
+       存版本号就把规则说清楚了：
+         · 演过、且演的就是**当前版本** → 不再演（退出重进永远是看板，一帧不放）。
+         · 没演过、或演的是**别的版本** → 演一遍，演完把版本号改成当前版本。
+
+       写入时机：FirstRunFlow 一露面就写（见 FirstRun.swift）。
+       也就是「这个安装已经进过开幕了」，哪怕用户第 1 秒就 ⌘Q ——
        这正是「只有下载完首次进 APP 才有」的字面含义。
-       清空时机：重置向导（resetForOnboarding）与两处「重新走一遍引导」入口 ——
-       用户明确要求「重走新手导览也会触发」这两个动画。 */
-    @Published var introPlayed: Bool = false     { didSet { save() } }
+       清空时机：重置向导（resetForOnboarding）与设置页两处重看入口。 */
+    @Published var introVersion: String = ""     { didSet { save() } }
+
+    /* ---------------- 「立刻重走一遍」的一次性请求（**刻意不持久化**） ----------------
+
+       菜单「重新运行首次配置向导」与设置页那两个按钮往这里投一枚信号，
+       MBApp 收到就把**冻结的**启动分流换成对应的分支，当场换幕 —— 不用重启。
+
+       为什么不干脆监听 onboarded / introVersion 的变化去自动重算：
+         因为 FirstRunFlow 一露面自己就会写 introVersion，
+         监听它等于把「正在演第一帧的 Flow」当场判成「已经演过了」，
+           SwiftUI 立刻把它换成看板 —— 动画夭折。
+         所以只认「人主动点的」这一路信号，跟内部写入彻底分开。 */
+    enum FlowRestart: Equatable {
+        case fullGuide     // 完整重走：开幕两幕 + 新手导览
+        case introOnly     // 只重演开幕，不动导览状态
+    }
+    /// 请求本身带上一个自增序号 `seq`。两件事都靠它：
+    ///   · onChange 靠「值变了」触发，而连点两次同一支按钮时请求本身没变 ——
+    ///     没有 seq，第二次就丢了；
+    ///   · 于是也不必「用完把它清回 nil」，省掉在 onChange 里改 @Published
+    ///     这一步（那是「视图更新中改状态」，能绕开就绕开）。
+    struct FlowRestartRequest: Equatable {
+        var kind: FlowRestart
+        var seq: Int
+    }
+    @Published var flowRestart: FlowRestartRequest? = nil
+
+    /// 请求「立刻重走一遍」。设置页那两个按钮、菜单那一项、以及
+    /// 真机自检后门（PreviewFlags.autoRestart）都从这里进。
+    func requestFlowRestart(_ kind: FlowRestart) {
+        flowRestart = FlowRestartRequest(kind: kind, seq: (flowRestart?.seq ?? 0) + 1)
+    }
+
     /* ---------------- 学校 ManageBac 地址 ----------------
        默认值就是本校（见 SchoolURL.fallback）。同学拿到 App 直接能用；
        别的学校的人在这里改一处，不用碰代码。后端每次抓取前也会重读它。 */
@@ -512,10 +568,11 @@ final class BoardSettings: ObservableObject {
         var displayName: String? = nil
         var gradeLabel: String? = nil
         var onboarded: Bool? = nil
-        /// 开场演出（快闪 + hello）是否放过。可选 —— 老 settings.json 里没有这一项，
-        /// 解出来是 nil，落到默认 false，也就是老用户升上来还会再演一次，
-        /// 演完就永久置位了。
+        /// 老字段（≤3.0）：开幕演出放过了没有，Bool 式。**只读不写**。
+        /// 读到 true 就翻译成 legacyIntro 哨兵值 —— 见 load()。
         var introPlayed: Bool? = nil
+        /// 演过开幕演出的那个**版本号**（3.5 起）。见 BoardSettings.introVersion。
+        var introVersion: String? = nil
 
         // ① 外观与主题
         var paletteID: String? = nil
@@ -668,7 +725,12 @@ final class BoardSettings: ObservableObject {
         if let v = b.displayName { displayName = v }
         if let v = b.gradeLabel { gradeLabel = v }
         if let v = b.onboarded { onboarded = v }
-        if let v = b.introPlayed { introPlayed = v }
+        // 开幕演出的版本号。老文件里只有 Bool 式的 introPlayed，没有版本号：
+        //   true          → 演过，但不知道在哪一版演的 → 记成哨兵值
+        //                    （它 ≠ 当前版本号，于是升上来会补演一次，正是用户要的）
+        //   false / 缺失  → 从没演过，留空串（同样 ≠ 当前版本号）
+        if let v = b.introVersion { introVersion = v }
+        else if b.introPlayed == true { introVersion = BoardSettings.legacyIntro }
         // ① 外观与主题
         if let v = b.paletteID { paletteID = v }
         if let v = b.themeBackdrop { themeBackdrop = v }
@@ -799,7 +861,8 @@ final class BoardSettings: ObservableObject {
         // ⓪ 档案
         b.englishName = englishName; b.displayName = displayName
         b.gradeLabel = gradeLabel; b.onboarded = onboarded
-        b.introPlayed = introPlayed
+        // 只写版本号，不再写老的那个 Bool 字段 —— 它是单向迁移的读入口。
+        b.introVersion = introVersion
         // ① 外观与主题
         b.paletteID = paletteID; b.themeBackdrop = themeBackdrop
         b.theme = theme.rawValue; b.density = density.rawValue; b.corner = corner.rawValue
@@ -974,7 +1037,7 @@ final class BoardSettings: ObservableObject {
         let keep = launchAtLogin
         let keepName = englishName, keepDisplay = displayName, keepGrade = gradeLabel
         let keepOnboarded = onboarded
-        let keepIntro = introPlayed
+        let keepIntro = introVersion
         loading = true
         paletteID = "standard"; themeBackdrop = true
         theme = .system; density = .comfortable; corner = .regular
@@ -1030,8 +1093,8 @@ final class BoardSettings: ObservableObject {
         // 档案原样保留
         englishName = keepName; displayName = keepDisplay
         gradeLabel = keepGrade; onboarded = keepOnboarded
-        // 「恢复默认外观」不该把开场动画放回来 —— 那跟外观没关系，留着。
-        introPlayed = keepIntro
+        // 「恢复默认外观」不该把开幕演出放回来 —— 那跟外观没关系，留着。
+        introVersion = keepIntro
         // 「默认停在哪一页」也回出厂：这一项和别的项一样受「恢复默认」影响，
         // 并顺手还回一次性校正名额（标记存在 UserDefaults 里）。
         // 两件事必须一起做 —— 只还名额、不在这里改值的话，用户按完「恢复默认」
@@ -1058,7 +1121,7 @@ final class BoardSettings: ObservableObject {
         displayName = ""
         gradeLabel = "G10"
         onboarded = false                // 回到引导
-        introPlayed = false              // ★ 开场演出也放回来 ★
+        introVersion = ""                // ★ 开幕演出也放回来 ★
         // 用户要求：「重走新手导览也会触发」MB Buddy 快闪 + hello。
         // 走到这里就是彻底回出厂，两个标记一起清，下次挂出 FirstRunFlow 会从头演。
         loading = false
