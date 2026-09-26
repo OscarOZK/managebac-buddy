@@ -4,14 +4,16 @@
 
 一块写给高中生的 macOS 综合看板：作业、成绩、课表、Teams 消息、English Corner 名单，一屏看完。优先适配北京一零一中学国际部；其他 IB / A-Level / AP 体系的学校，替换抓取规则后同样能用。
 
-<a href="https://github.com/OscarOZK/managebac-buddy/releases/download/v3.5/ManageBac-Buddy-3.5.dmg">
+<a href="https://github.com/OscarOZK/managebac-buddy/releases/download/v3.5.1/ManageBac-Buddy-3.5.1.dmg">
   <img src="docs/images/download-hero.png" alt="下载 ManageBac-Buddy" width="100%">
 </a>
 
-### ↓ [点此下载 ManageBac-Buddy-3.5.dmg](https://github.com/OscarOZK/managebac-buddy/releases/download/v3.5/ManageBac-Buddy-3.5.dmg)
+### ↓ [点此下载 ManageBac-Buddy-3.5.1.dmg](https://github.com/OscarOZK/managebac-buddy/releases/download/v3.5.1/ManageBac-Buddy-3.5.1.dmg)
 
 macOS 26.0 及以上 · Apple 芯片 · 34.6 MB · [查看全部版本](https://github.com/OscarOZK/managebac-buddy/releases)
 
+> **3.5.1**：综合优化，提升稳定性与流畅度。已在 3.5 上的直接装这一版即可。
+>
 > **从 v3.0 升级？** 它现在叫 **ManageBac-Buddy**（原名 ManageBac Dashboard）。名字只换了这一处，装上去之后你的课表、成绩、四个账号的登录态都会自己跟过来——不用重登，也不用重新导课表。
 
 ---
@@ -329,7 +331,7 @@ MBBOARD_OUT=/somewhere bash build.sh
 打包成 DMG 安装包（用系统自带的 `hdiutil`，不需要额外安装任何工具）：
 
 ```bash
-bash tools/make-dmg.sh 3.5
+bash tools/make-dmg.sh 3.5.1
 ```
 
 首次启动会引导你填学校地址、账号和密码。包内自带的 Python 运行时、网页引擎与抓取工具会自己就位——不需要 `npm install`，不需要预先装任何东西。

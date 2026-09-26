@@ -24,11 +24,11 @@
 	<string>APPL</string>
 	<!-- 版本号。改这里就够了，build.sh 直接把它搬进包。
 	     CFBundleVersion 必须是**单调递增**的整数序列，不看语义 —— 
-	     3.5 只要比 3 大就行，所以写 35；写成 "3.5" 也能比，但纯数字最不容易出岔。 -->
+	     3.5.1 只要比 35 大就行，所以写 351；写成 "3.5.1" 也能比，但纯数字最不容易出岔。 -->
 	<key>CFBundleShortVersionString</key>
-	<string>3.5</string>
+	<string>3.5.1</string>
 	<key>CFBundleVersion</key>
-	<string>35</string>
+	<string>351</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>26.0</string>
 	<key>LSApplicationCategoryType</key>
