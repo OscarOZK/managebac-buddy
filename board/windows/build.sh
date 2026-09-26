@@ -1,19 +1,19 @@
 #!/bin/bash
 # ======================================================================
-# ManageBac 看板 · Windows 版打包
+# ManageBac-Buddy · Windows 版打包
 # 在 macOS 上直接产出可在 Windows 上双击运行的原生应用
 # （Electron 预编译二进制，win32-x64；64 位 Win10/11 均可，含 ARM 机型仿真运行）
 #
-# 产物结构（桌面文件夹「ManageBac 看板 For Windows」）：
-#   ├── ManageBac 看板.exe     ← 双击即用
+# 产物结构（桌面文件夹「ManageBac-Buddy For Windows」）：
+#   ├── ManageBac-Buddy.exe     ← 双击即用
 #   ├── （运行所需的 dll / locales / resources …）
 #   └── 使用说明.html
 # ======================================================================
 set -e
 
 SRC="${MBBOARD_SRC:-$HOME/.mbboard/board/windows}"
-OUT="${MBBOARD_OUT:-$HOME/Desktop/ManageBac 看板 For Windows}"
-APPNAME="ManageBac 看板"
+OUT="${MBBOARD_OUT:-$HOME/Desktop/ManageBac-Buddy For Windows}"
+APPNAME="ManageBac-Buddy"
 NODE="${MBBOARD_NODE:-$(command -v node)}"
 NPM="${MBBOARD_NPM:-$(command -v npm)}"
 PACKAGER="$SRC/node_modules/@electron/packager/bin/electron-packager.js"
@@ -50,7 +50,7 @@ rm -rf "$SRC/dist"
   --app-copyright="ManageBac Board" \
   --win32metadata.CompanyName="ManageBac Board" \
   --win32metadata.ProductName="$APPNAME" \
-  --win32metadata.FileDescription="ManageBac 看板 · 作业与成绩桌面看板" \
+  --win32metadata.FileDescription="ManageBac-Buddy · 作业与成绩桌面看板" \
   --ignore="^/dist" --ignore="^/dev" --ignore="^/build\.sh$" --ignore="^/makeico\.py$" \
   --ignore="^/assets/iconset" --ignore="^/package-lock\.json$" --ignore="^/使用说明"
 

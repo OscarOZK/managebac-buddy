@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-ManageBac 看板 —— 本机桥接服务
+ManageBac-Buddy —— 本机桥接服务
 - 提供 REST 接口，供桌面上的 HTML 应用、菜单栏 App、**手表 App（WiFi 直连）**调用
 - 真实数据通过无界面 Chrome（agent-browser）在同一会话内并行 fetch 获取
 - 账号密码在 /api/login 一次性使用，不落盘、不写日志。
@@ -71,6 +71,13 @@ try:
 except Exception:
     pass
 
+# 共享模块目录（teams / seiue / browserfind…）。放在这么靠前的位置，
+# 是因为下面「找浏览器」那一段就要 import browserfind —— 原来这行在
+# 1200 行开外，早于此处的 import 会直接 ModuleNotFoundError。
+SHARED_DIR = os.path.join(HERE, "board", "shared")
+if os.path.isdir(SHARED_DIR) and SHARED_DIR not in sys.path:
+    sys.path.insert(0, SHARED_DIR)
+
 SESSION_NAME = "mbboard"
 
 
@@ -95,209 +102,171 @@ def _find_agent_browser():
 AB = _find_agent_browser()
 
 
+# ---------- 浏览器：统一交给 board/shared/browserfind.py ----------
+# 以前这里有一份「宽查找」（扫 /Applications 下的 Chrome/Edge/Brave/Chromium），
+# 而 Teams（mssession.py）和希悦（seiue.py）各自另有一份「窄查找」——
+# 只认数据目录里我们下载的那一份。两份逻辑不共享，于是出现了最离谱的现场：
+#
+#     「检查组件」说浏览器就绪（宽查找找到了系统里装好的 Edge），
+#     点进去连 Teams / 希悦却报「找不到 Chrome for Testing」（窄查找没找到）。
+#
+# 而真正的问题在门槛本身：agent-browser 与 CDP 只要一个 **Chromium 内核的
+# 可执行文件**，Chrome / Edge / Brave / Arc / Chromium 都能用。用户装过其中
+# 任何一个就够，不该再逼他等 150MB 下载（国内还多半下不动）。
+# 现在三处共用同一个实现，顺序是：
+#     ① 数据目录里我们下过的那一份 → ② 系统里已装的任意 Chromium → ③ 兜底下载。
+try:
+    import browserfind as _bf
+except Exception:                                        # pragma: no cover
+    _bf = None
+
+
+# ---------- 内置网页引擎：浏览器就在 App 身体里，不用任何人装 ----------
+# 这一段是「四个账号只有 DeepSeek 登得进去」的**根治**办法。
+#
+# 原来的死结：ManageBac / Teams / 希悦 都要一个真浏览器，而
+#   ① 别人电脑上多半没有 Chromium；
+#   ② 我们自动下一份要等 150MB，国内还常常只有镜像通得了。
+# 而 macOS 自带 WebKit（Safari 的内核）—— 一个字节都不用下。
+#
+# 所以 App 自己挂了一个 WKWebView，Python 这边通过这条通道指挥它：
+#     Swift  GET  /api/webengine/poll     领活
+#     Python 把指令塞进 webengine._QUEUE
+#     Swift  POST /api/webengine/result   交答案
+# 引擎在线时，下面所有「找浏览器 / 下浏览器」的代码都走不到；
+# 不在线（Windows 版、或单独把 bridge.py 拎出来跑）就原样回退到
+# agent-browser + Chromium，行为一个字都没变。
+try:
+    import webengine as we
+except Exception:                                        # pragma: no cover
+    we = None
+
+if we is not None:
+    # ★ 告诉 webengine「你现在跑在 bridge 这个进程里」★
+    #   之后它的命令行形态就会直接在内存队列上执行，不再 fork 子进程、
+    #   不再经 HTTP 回到自己 —— 详见 board/shared/webengine.py 的 run_cli。
+    try:
+        we.INPROC = True
+    except Exception:                                    # pragma: no cover
+        pass
+
+
+def engine_ready():
+    """App 里的内置引擎在不在、能不能干活。"""
+    try:
+        return bool(we and we.ready())
+    except Exception:
+        return False
+
+
+def engine_online():
+    """只问「有没有人在轮询」，不真发指令 —— 给界面状态用，毫秒级。"""
+    try:
+        return bool(we and we.attached())
+    except Exception:
+        return False
+
+
+def engine_label():
+    if not engine_online():
+        return ""
+    try:
+        v = we.state() or {}
+    except Exception:
+        v = {}
+    return "App 内置浏览器（WebKit，无需安装）"
+
+
 def _chrome_candidates():
-    """按「越省事越靠前」排：
-    ① 数据目录里我们自己下的那一份（Windows 是 chrome.exe）；
-    ② ~/Applications 下的浏览器；
-    ③ 系统 /Applications 下任何一款 Chromium 内核的浏览器。
-    为什么要列这么多：agent-browser 只需要一个 Chromium 内核的可执行文件，
-    Chrome / Edge / Brave / Chromium 都能用。逼着用户去装 Chrome，
-    或者去 Google CDN 下 150MB（国内多半下不动），都是没必要的门槛。
-    """
-    d = os.path.join(MBB_DATA, "chrome")
-    inner = ["Google Chrome for Testing.app", "Google Chrome.app",
-             "Chromium.app", "Microsoft Edge.app", "Brave Browser.app"]
-    mac_names = {
-        "Google Chrome for Testing.app": "Google Chrome for Testing",
-        "Google Chrome.app": "Google Chrome",
-        "Chromium.app": "Chromium",
-        "Microsoft Edge.app": "Microsoft Edge",
-        "Brave Browser.app": "Brave Browser",
-    }
-    out = [os.path.join(d, "chrome.exe")]
-    for app in inner:
-        for base in ("/Applications", os.path.expanduser("~/Applications")):
-            out.append(os.path.join(base, app, "Contents", "MacOS", mac_names[app]))
-        out.append(os.path.join(d, app, "Contents", "MacOS", mac_names[app]))
-    out.append("/tmp/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing")
-    # Windows / Linux
-    out += [
-        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-        "/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser",
-    ]
-    return out
+    """兼容旧调用：候选可执行文件清单（越省事越靠前）。"""
+    return _bf.candidates() if _bf else []
 
 
 def chrome_path():
-    """每次现找一遍：首次抓取时可能刚把 Chrome 下下来，不能沿用一个启动时的旧值。"""
-    for p in _chrome_candidates():
-        if os.path.exists(p):
-            return p
-    return os.path.join(MBB_DATA, "chrome", "Google Chrome for Testing.app",
-                        "Contents", "MacOS", "Google Chrome for Testing")
+    """现找一遍。**找不到就返回 ""**，不再回退到一个并不存在的硬编码路径 ——
+    那正是「用户明明装了浏览器，却被告知找不到」的来源。"""
+    return _bf.find() if _bf else ""
 
 
-CHROME = chrome_path()
-
-# ---------- Chrome for Testing：找不到就自己下一份 ----------
-# 为什么非做不可：抓取全靠无界面 Chrome，而新用户的机器上十有八九没有。
-# 以前 /api/health 里写着一句「首次抓取时会自动下载 Chrome for Testing」，
-# 但**根本没有下载代码** —— 于是新用户点登录，拿到的只是一句
-# "Failed to launch Chrome at ...: No such file or directory"。
-# 这里用标准库（urllib + zipfile）把那个承诺补上，不引入任何新依赖。
-CHROME_JSON = os.environ.get(
-    "MBBOARD_CHROME_JSON",
-    "https://googlechromelabs.github.io/chrome-for-testing/"
-    "last-known-good-versions-with-downloads.json")
-CHROME_DL = {"busy": False, "error": "", "msg": "", "done": False}
-CHROME_DL_LOCK = threading.Lock()
+def chrome_name():
+    """给界面/日志看的一句话：找到的是哪一款浏览器。"""
+    return _bf.describe() if _bf else ""
 
 
+CHROME = ""      # 兼容旧的打印；真值请用 chrome_path()（浏览器可能中途才装好）
+
+# ---------- Chrome for Testing：**兜底方案**，不是唯一方案 ----------
+# 顺序见上：先用用户已经装好的浏览器，一个 Chromium 都没有才下这一份。
+# 保留它的理由很实在：macOS 上确实存在「一台浏览器都没装」的机器
+#（作者这台开发机全盘扫过，除我们自己下的那份之外一个都没有）。
+# 另外国内直连 Google 的 CDN 常不通，所以 browserfind 里带了镜像回退。
 def chrome_ready():
-    for p in _chrome_candidates():
-        if os.path.exists(p):
-            return True
-    return False
+    """有没有可用的浏览器。
 
-
-def _chrome_platform():
-    if sys.platform == "darwin":
-        return "mac-arm64" if platform.machine() in ("arm64", "aarch64") else "mac-x64"
-    if sys.platform == "win32":
-        return "win64" if sys.maxsize > 2 ** 32 else "win32"
-    return "linux64"
-
-
-def _open_url(url, timeout=30):
-    """直连优先，失败再走系统代理。
-
-    为什么直连优先：不少机器上配着一个根本没在跑的代理（或者只对特定域名
-    生效），urllib 默认会闷头去撞它，一路卡满超时 —— 看起来就像「下载死了」。
-    先直连一趟能把这种情况直接跳过。
+    ★ 内置引擎优先 ★ 引擎在线时这个问题根本不该问外部浏览器 ——
+    用户机器上一个 Chromium 都没有也完全没关系。
     """
-    req = urllib.request.Request(url, headers={"User-Agent": "mbboard/1.0"})
-    last = None
-    for opener in (urllib.request.build_opener(urllib.request.ProxyHandler({})),
-                   urllib.request.build_opener()):
-        try:
-            return opener.open(req, timeout=timeout)
-        except Exception as e:
-            last = e
-    raise last
-
-
-def _url_fetch(url, dest, timeout=900):
-    """流式落盘，避免 150MB 全塞进内存。"""
-    with _open_url(url, timeout=timeout) as r, open(dest, "wb") as f:
-        while True:
-            chunk = r.read(262144)
-            if not chunk:
-                break
-            f.write(chunk)
+    if engine_online():
+        return True
+    return bool(_bf and _bf.ready())
 
 
 def _install_chrome():
-    """下 Chrome for Testing 到 MBB_DATA/chrome，返回 (ok, 说明)。"""
-    plat = _chrome_platform()
-    try:
-        with _open_url(CHROME_JSON, timeout=20) as r:
-            meta = json.loads(r.read().decode("utf-8", "replace"))
-        items = meta["channels"]["Stable"]["downloads"]["chrome"]
-        url = next((d.get("url") for d in items if d.get("platform") == plat), None)
-        if not url:
-            return False, "官方下载清单里没有 %s 的包" % plat
-
-        root = os.path.join(MBB_DATA, "chrome")
-        os.makedirs(root, exist_ok=True)
-        zpath = os.path.join(root, "chrome-for-testing.zip")
-        _url_fetch(url, zpath)
-
-        with zipfile.ZipFile(zpath) as z:
-            z.extractall(root)
-        try:
-            os.remove(zpath)
-        except Exception:
-            pass
-
-        # zip 里多一层 chrome-<plat>/，挪平到 chrome/ 下，
-        # 这样 _chrome_candidates() 里那个固定路径才能对上。
-        inner = os.path.join(root, "chrome-" + plat)
-        if os.path.isdir(inner):
-            for item in os.listdir(inner):
-                src = os.path.join(inner, item)
-                dst = os.path.join(root, item)
-                if not os.path.exists(dst):
-                    shutil.move(src, dst)
-            shutil.rmtree(inner, ignore_errors=True)
-
-        # macOS / Linux 要可执行位；macOS 还要摘掉 quarantine，
-        # 否则第一次启动会被系统的「已损坏，无法打开」拦下。
-        # 只动我们自己下的那一份 —— 用户 /Applications 里原有的浏览器不碰。
-        mine = []
-        for item in os.listdir(root):
-            p = os.path.join(root, item)
-            if item.endswith(".app"):
-                p = os.path.join(p, "Contents", "MacOS", item[:-4])
-            if os.path.isfile(p):
-                mine.append(p)
-        for p in mine:
-            try:
-                os.chmod(p, 0o755)
-            except Exception:
-                pass
-        if sys.platform == "darwin":
-            for item in os.listdir(root):
-                if item.endswith(".app"):
-                    subprocess.run(["/usr/bin/xattr", "-dr", "com.apple.quarantine",
-                                    os.path.join(root, item)],
-                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-        if not chrome_ready():
-            return False, "解压完了却没找到可执行文件"
-        return True, chrome_path()
-    except Exception as e:
-        return False, "%s: %s" % (type(e).__name__, e)
+    """下 Chrome for Testing 到 <数据目录>/chrome，返回 (ok, 说明)。"""
+    if _bf is None:
+        return False, "浏览器查找模块没加载起来"
+    return _bf.install()
 
 
 def ensure_chrome_async():
-    """Chrome 不在就后台拉一份；已经在拉就不重复拉。绝不阻塞请求线程。"""
-    if chrome_ready():
+    """一个可用浏览器都没有就在后台拉一份；已经在拉就不重复拉。
+
+    这是**兜底**：绝大多数机器上系统里已经装着 Chrome / Edge / Brave，
+    browserfind 直接就能找到，根本走不到这里。
+    """
+    if _bf is None:
         return False
-    with CHROME_DL_LOCK:
-        if CHROME_DL["busy"]:
-            return False
-        CHROME_DL["busy"] = True
-
-    def work():
-        print("开始下载 Chrome for Testing（首次运行，约 150MB）…", flush=True)
-        ok, msg = _install_chrome()
-        with CHROME_DL_LOCK:
-            CHROME_DL["busy"] = False
-            CHROME_DL["done"] = ok
-            CHROME_DL["msg"] = msg
-            CHROME_DL["error"] = "" if ok else msg
-        print("Chrome for Testing %s：%s" % ("就绪" if ok else "下载失败", msg), flush=True)
-
-    threading.Thread(target=work, daemon=True).start()
-    return True
+    return _bf.prepare_async()
 
 
 def chrome_state():
     """给 /api/health 和界面看的一句话状态。"""
+    # 内置引擎在线：外部浏览器这件事整个不存在了，直接报「已就绪」。
+    # 不报的话界面会把用户引去「装一个 Chrome / 等 150MB 下载」—— 全是白费。
+    if engine_online():
+        return {"ok": True, "path": "app://webengine", "app": "", "busy": False,
+                "error": "", "engine": True, "source": "engine",
+                "name": "App 内置浏览器（WebKit）", "fix": ""}
+    if _bf is None:
+        return {"ok": False, "path": "", "app": "", "busy": False, "error": "",
+                "engine": False, "source": "none",
+                "fix": "浏览器查找模块没加载起来（board/shared/browserfind.py 缺失？）"}
+    # ★ 一律补上 engine / source 两个键 ★
+    #   browserfind.state() 里没有这两个字段，界面读到的是 undefined ——
+    #   「引擎在不在」这件事在引擎离线时必须得到一个**明确的 false**，
+    #   而不是「这个键不存在」。差一点点就会写成「关掉引擎那条分支的判断
+    #   一直不成立」，表现是状态栏一会儿显示内置浏览器、一会儿又让用户去装 Chrome。
+    d = dict(_bf.state() or {})
+    d.setdefault("engine", False)
+    d.setdefault("source", "external")
+    return d
+
+
+def ensure_browser_ready():
+    """三条登录入口统一调这个：**保证有一个浏览器可用**，没有就后台准备。
+
+    以前只有 ManageBac 那条路会触发下载 —— 用户要是跳过了 ManageBac 直接
+    去连 Teams，就必然撞上「找不到 Chrome for Testing」，而且屏幕上没有任何
+    正在准备的提示。现在 Teams / 希悦 / ManageBac 都从同一个门进来。
+    返回 (是否已就绪, 给用户看的一句话)。
+    """
+    if engine_online():
+        return True, ""
     if chrome_ready():
-        return {"ok": True, "path": chrome_path(), "busy": False, "error": "", "fix": ""}
-    with CHROME_DL_LOCK:
-        busy, err = CHROME_DL["busy"], CHROME_DL["error"]
-    if busy:
-        return {"ok": False, "path": "", "busy": True, "error": "",
-                "fix": "正在后台下载 Chrome for Testing（首次约 150MB），装好就能抓取"}
-    if err:
-        return {"ok": False, "path": "", "busy": False, "error": err,
-                "fix": "自动下载失败，可以手动装一个 Chrome：" + err}
-    return {"ok": False, "path": "", "busy": False, "error": "",
-            "fix": "首次抓取时会自动下载 Chrome for Testing；点一下「重新校验」就会开始下"}
+        return True, ""
+    ensure_chrome_async()
+    st = chrome_state()
+    return False, (st.get("fix") or "正在自动准备浏览器（首次约 150MB）…")
 
 
 SCRAPE_JS = os.path.join(HERE, "scrape.js")          # 老残留，保留只为兼容
@@ -1254,8 +1223,14 @@ def idle_limit():
 
 def _env():
     e = dict(os.environ)
-    ensure_chrome_async()          # 没有 Chrome 就先在后台拉一份，别让第一次抓取白跑
-    e["AGENT_BROWSER_EXECUTABLE_PATH"] = chrome_path()
+    ensure_chrome_async()          # 一个浏览器都没有就先在后台准备一份
+    p = chrome_path()
+    # ★ 只在真的找到时才设这一条 ★
+    #   设成空串会让 agent-browser 拿它去当可执行路径，报的错比
+    #   「没找到浏览器」难懂得多（"Failed to launch Chrome at :"）。
+    #   不设它、让 agent-browser 走自己的发现逻辑，反而更容易成功。
+    if p:
+        e["AGENT_BROWSER_EXECUTABLE_PATH"] = p
     e["AGENT_BROWSER_SESSION_NAME"] = SESSION_NAME
     # 让 ManageBac 的登录态也落在**数据目录**里。
     # 不设这一条时，agent-browser 会把 cookie 写到 ~/.agent-browser/sessions/，
@@ -1273,27 +1248,76 @@ def components():
     缺 agent-browser 还是缺 Chrome，一眼能分清，也给出该怎么装。
     """
     ab_ok = os.path.exists(AB)
-    ab_fix = "" if ab_ok else (
-        "本机缺 agent-browser（抓取要用它）。终端里跑一句："
-        "npm install -g agent-browser —— 需要先有 Node.js（nodejs.org 装 LTS 版）")
+    eng = engine_online()
+    # ★ 别再让用户去 npm install ★
+    #   分发版把 agent-browser 打进了 App 包，启动时会装到数据目录。
+    #   对着一个刚下载了 App 的同学说「去装 Node、再去 npm install」，
+    #   他十有八九就此放弃了 —— 而这本来完全不需要他做任何事。
+    #   内置引擎在线时更是连 agent-browser 都不需要。
+    ab_fix = "" if (ab_ok or eng) else _AB_MISSING
     return {
-        "agentBrowser": {"ok": ab_ok, "path": AB, "fix": ab_fix},
+        "agentBrowser": {"ok": ab_ok or eng, "path": AB if not eng else "app://webengine",
+                         "fix": ab_fix, "viaEngine": eng},
         "chrome": chrome_state(),
         "python": {"ok": True, "path": sys.executable,
                    "note": "后端只用标准库，任何 Python 3.8+ 都够用"},
         "dataDir": MBB_DATA,
         "codeDir": HERE,
         "school": school_base(),
-        "ready": ab_ok and chrome_ready(),
+        "ready": (ab_ok or eng) and chrome_ready(),
     }
 
 
+def _ab_target(args):
+    """现在该由谁去干活。返回完整的 argv。
+
+    ★ 这是「脱离 Chrome」的接缝 ★ bridge.py 里所有浏览器操作用的都是
+    agent-browser 的那套命令行（open / eval / wait / cookies / close）。
+    board/shared/webengine.py 把那套命令一模一样地实现了一遍，
+    只是背后换成 App 内置的 WebKit。所以这里只要换掉「谁来执行」，
+    上层十几处业务代码一个字都不用改。
+
+    引擎不在线（Windows 版、或者单独把 bridge.py 拎出来跑）时，
+    原样退回 agent-browser + Chromium。
+    """
+    if engine_online():
+        shim = os.path.join(SHARED_DIR, "webengine.py")
+        if os.path.exists(shim):
+            # ★ 必须用 sys.executable 起它 ★
+            #   不能靠 shebang `#!/usr/bin/env python3`：分发版里真正能用的
+            #   Python 是包内那一份，PATH 上那个 /usr/bin/python3 只是个壳。
+            return [sys.executable, shim] + list(args)
+    return [AB, "--session-name", SESSION_NAME] + list(args)
+
+
+def _ab_env():
+    """执行环境。
+
+    ★ 引擎在线时绝不能调 _env() ★ 那个函数里有一句 ensure_chrome_async()，
+    会在后台闷头下一个 150MB 的 Chrome for Testing —— 而我们已经有浏览器了。
+    用户看到的现象就是「明明能用，风扇却狂转、磁盘莫名其妙少了几百兆」。
+    """
+    if engine_online():
+        return dict(os.environ)
+    return _env()
+
+
 def _ab_raw(args, timeout=180, stdin_data=None):
-    """真正执行 agent-browser（不做自愈），返回 (returncode, stdout+stderr)"""
+    """真正执行一次浏览器操作（不做自愈），返回 (returncode, stdout+stderr)"""
+    # ★ 引擎在线时在**本进程内**执行，不 fork ★
+    #   原来这里一律 fork 一个 webengine.py 子进程，子进程再经 HTTP 回到
+    #   本进程的队列上 —— 四跳、两个进程。实测后果很实在：后台 status_loop
+    #   探一次状态就 fork 一次，父子两边各自挂几十秒，几条线程叠起来就把
+    #   整条链路拖死（抓线程栈时看得清清楚楚：父进程卡在 subprocess.run、
+    #   子进程卡在 HTTP 等引擎）。详见 board/shared/webengine.py 的 run_cli。
+    if engine_online() and we is not None and hasattr(we, "run_cli"):
+        r = we.run_cli(list(args), stdin_data=stdin_data)
+        if r is not None:
+            return r
     try:
         r = subprocess.run(
-            [AB, "--session-name", SESSION_NAME] + args,
-            env=_env(),
+            _ab_target(args),
+            env=_ab_env(),
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -1327,32 +1351,48 @@ def reset_browser():
     """把无头浏览器彻底重建：关掉全部会话 + 清掉残留进程，再让下次调用重新拉起。"""
     with _RESET_LOCK:
         try:
-            subprocess.run([AB, "close", "--all"], env=_env(),
-                           capture_output=True, text=True, timeout=45)
+            # 走 _ab_raw 而不是自己 subprocess.run —— 引擎在线时它会就地
+            # 在本进程里执行，不必为一个「关掉全部标签」再 fork 一个进程。
+            _ab_raw(["close", "--all"], timeout=45)
         except Exception:
             pass
+        # ★ 只收「用着我们数据目录」的浏览器，绝不全局 pkill ★
+        #   以前这里是 `pkill -f "Google Chrome for Testing"`：既收不掉
+        #   换成系统 Chrome / Edge 之后的实例（重置形同虚设），又会在用户
+        #   恰好装过 Chrome for Testing 时误伤。现在按 --user-data-dir 精确匹配，
+        #   用户平时自己开的那个浏览器（profile 在别处）一根汗毛都不会动。
         try:
-            subprocess.run(["/usr/bin/pkill", "-f", "Google Chrome for Testing"],
-                           capture_output=True, text=True, timeout=15)
+            kill_our_browsers(grace=1.0)
         except Exception:
             pass
-        time.sleep(1.2)
+        time.sleep(0.4)
         RESTORED["done"] = False     # 允许下次 ensure_session 重新注入登录 Cookie
         print("浏览器会话已重置（将自动重建）。", flush=True)
 
 
-# 本机 Chrome for Testing 的「主进程」特征串。
-# 只认可执行文件那一段：Framework Helper 的进程名里没有它，所以不会重复计数 ——
-# 杀掉主进程，它的渲染/GPU 子进程会跟着一起走。
-_CHROME_MAIN = "Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"
+def _our_profile_pattern():
+    """匹配「用着我们数据目录的浏览器主进程」。
+
+    ★ 不再写死「Google Chrome for Testing」★
+    浏览器现在可能是用户自己装的 Chrome / Edge / Brave / Arc —— 写死那一串
+    的后果有两个：① 换成系统浏览器后这段逻辑完全失效（重置、回收孤儿都白做，
+       残留进程越攒越多直到顶爆内存）；
+       ② 反过来，用户恰好装过 Chrome for Testing 时，一句全局 pkill 会
+       把他**自己正在用的**浏览器杀掉。这是绝对不能发生的事。
+    所以特征串只保留两段：**任何一个 .app 里的可执行文件** + **我们的 profile 路径**。
+    Framework Helper 的进程名里没有 `Contents/MacOS/<exe>` 这一段，所以不会
+    重复计数 —— 杀掉主进程，它的渲染/GPU 子进程会跟着一起走。
+    """
+    esc = re.escape(MBB_DATA.rstrip("/")).replace(" ", "[ ]")
+    return r"\.app/Contents/MacOS/[^ \t]+.*--user-data-dir=[" + esc + r"]/"
 
 
 def our_browser_pids(orphans_only=False):
-    """列出「属于本数据目录」的 Chrome 主进程 PID。
+    """列出「属于本数据目录」的浏览器主进程 PID。
 
     看板的浏览器 profile（ManageBac / Teams / 希悦）全都建在 MBB_DATA 下面，
     所以拿 `--user-data-dir` 的路径前缀一比，就能确定是我们自己拉起来的 ——
-    顺手也避开了误伤用户平时用的那个 Chrome（它的 profile 在别处）。
+    顺手也避开了误伤用户平时用的那个浏览器（它的 profile 在别处）。
 
     orphans_only=True 时只留「父进程已经没了、被 launchd(PID 1) 收养」的那些，
     也就是上一条命留下的无主进程。
@@ -1361,9 +1401,7 @@ def our_browser_pids(orphans_only=False):
     permitted」，而这函数必须稳 —— 拿不到进程表就当没孤儿，什么都别做。
     pgrep -P 1 正好直接给出「launchd 收养的进程」，比自己去解析 ppid 更省事。
     """
-    pat = (_CHROME_MAIN.replace(".", r"\.")
-           + r".*--user-data-dir=" + re.escape(MBB_DATA.rstrip("/")) + r"/")
-    pids = _pgrep(["-f", pat])
+    pids = _pgrep(["-f", _our_profile_pattern()])
     if orphans_only:
         pids &= _pgrep(["-P", "1"])
     return sorted(pids)
@@ -1470,9 +1508,18 @@ def _json_from(out):
 STATUS_JS = (
     "JSON.stringify({url:location.href,title:document.title,"
     "hasLogin:!!document.querySelector('#session_login'),"
+    "hasPwd:!!document.querySelector('input[type=password]'),"
+    "hasOut:!!document.querySelector('a[href*=\"/logout\"], a[href*=\"/sign_out\"],"
+    " form[action*=\"/logout\"]'),"
     "user:(function(){var e=document.querySelector('.user-name, [data-testid=user-name]');"
+    "if(e&&e.innerText&&e.innerText.trim())return e.innerText.trim();"
     "var m=document.body.innerText.match(/Welcome,\\s*([^!\\n]{1,40})!/);return m?m[1].trim():'';})()})"
 )
+
+
+_AB_MISSING = ("本机缺少抓取组件（agent-browser），数据读不出来。"
+               "请退出看板（⌘Q）后重新打开 —— 看板启动时会把自带的组件装好；"
+               "如果重开还是这样，请重新安装看板。")
 
 
 def _ab_err_text(out):
@@ -1484,13 +1531,17 @@ def _ab_err_text(out):
     s = (out or "").strip()
     low = s.lower()
     if "failed to launch chrome" in low or ("chrome" in low and "no such file" in low):
-        return "还没有可用的浏览器。点一下「重新校验」就会自动下载 Chrome（首次约 150MB）。"
+        # ★ 别再说「去装 Chrome」★
+        #   本机已经装着 Chrome / Edge / Brave 任意一款就够用，我们只是没找到；
+        #   一款都没有时也会自动准备。用户唯一要做的是再点一次。
+        return ("还没有可用的浏览器：点一下「重新校验」，会自动用本机已装的 "
+                "Chrome / Edge / Brave，或准备一份（首次约 150MB）。")
     if "enotfound" in low or "getaddrinfo" in low or "econnrefused" in low or "etimedout" in low:
         return "连不上学校网站。确认网络能打开 ManageBac（校园网 / VPN 需不需要开）。"
     if "timed out" in low or "timeout" in low:
         return "抓取超时了，学校网站这次没响应。过一会儿点「重新校验」再试。"
     if "command not found" in low or "no such file" in low:
-        return "抓取组件（agent-browser）没找到。终端跑一句：npm install -g agent-browser"
+        return _AB_MISSING
     return s[:200]
 
 
@@ -1498,17 +1549,13 @@ def get_status():
     # 这两条前置判断，是把「说不清楚的失败」变成「知道下一步点哪里」。
     if not os.path.exists(AB):
         return {"loggedIn": False, "url": "", "user": "",
-                "msg": "本机还没装 agent-browser（抓取依赖它）。"
-                       "终端跑一句：npm install -g agent-browser",
-                "reason": "本机还没装 agent-browser（抓取依赖它）。"
-                          "终端跑一句：npm install -g agent-browser"}
+                "msg": _AB_MISSING, "reason": _AB_MISSING}
     if not chrome_ready():
         ensure_chrome_async()
+        t = (chrome_state().get("fix") or "").strip() or \
+            "浏览器还没就绪：正在自动准备（首次约 150MB），装好就能抓取。"
         return {"loggedIn": False, "url": "", "user": "",
-                "msg": "浏览器还没就绪：正在后台下载 Chrome（首次约 150MB）。"
-                       "几分钟后点「重新校验」。",
-                "reason": "浏览器还没就绪：正在后台下载 Chrome（首次约 150MB）。"
-                          "几分钟后点「重新校验」。", "preparing": True}
+                "msg": t, "reason": t, "preparing": True}
     rc, out = ab(["eval", STATUS_JS], timeout=90)
     if rc != 0:
         t = _ab_err_text(out)
@@ -1517,7 +1564,22 @@ def get_status():
     if not isinstance(d, dict):
         d = {}
     url = d.get("url", "") or ""
-    logged = (not d.get("hasLogin", False)) and ("/login" not in url) and ("/student/" in url)
+    who = (d.get("user", "") or "").strip()
+    # ★ 登录判据：别再只看 URL 里有没有 "/student/" ★
+    #   原来要同时满足「没有 #session_login」+「URL 含 /student/」。问题是
+    #   ManageBac 登录后的落点并不一定在 /student/ 下面（学校首页、通知页、
+    #   学期页都在别的前缀下），于是**登录明明成功了却被判成失败**，
+    #   界面弹「登录失败，检查账号密码后重试」—— 用户去改密码，越改越乱。
+    #   现在只要拿到任一条「登录后的正证据」就算成功：
+    #     ① 页面上出现了用户名 / "Welcome, X!"；
+    #     ② 页面上有登出链接（只有登进去才有）；
+    #     ③ 落在 /student/ 下的页面。
+    #   同时保留反向证据（页面上还有登录框 / 密码框 ⇒ 一定没登进去）与
+    #   URL 指向登录页，避免「假成功」——用户最恨的两件事就是假失败和假成功。
+    has_login = bool(d.get("hasLogin", False)) or bool(d.get("hasPwd", False))
+    looks_login_url = any(k in url for k in ("/login", "/sign_in", "/signin", "/auth/"))
+    positive = bool(who) or bool(d.get("hasOut", False)) or ("/student/" in url)
+    logged = (not has_login) and (not looks_login_url) and positive
     # `reason` 之外再给一份 `msg`：界面两处检查按钮读的是 `msg`（历史命名），
     # 只写 reason 的话这些提示就全被吞掉了 —— 用户只看到一句「未登录」，
     # 而服务端明明已经把「正在下载 Chrome，几分钟后点重新校验」写好了。
@@ -1649,22 +1711,59 @@ COOKIE_JS = (
 
 
 def _already_logged_in():
-    """快速问一句「现在是不是已经登着了」。
+    """「现在是不是已经登着了」——但对「是」的答案一律现场复核。
 
-    先看后台养着的那份快照（毫秒级、不碰浏览器）。快照只要还新鲜就直接采信
-    —— 不管是「登着」还是「没登着」：没登着时再去现场探一次纯属白等。
-    只有**压根没探过**时才现场探一次，且给 8 秒上限，绝不能让一次点击
-    变成转不完的圈。
+    ★ 语义变了，而且是**故意**变的 ★
+    以前快照只要还新鲜就直接采信，包括「登着」这个答案。那是假成功的来源：
+    快照可能是上一段会话、甚至上一个账号留下的，用户输个错密码照样被告知
+    「登录成功」，然后在「数据怎么一直是旧的」上折腾。
+    现在：快照里的「否」可以直接用（最坏也就是多走一次真实登录），
+    快照里的「是」则一定再用一次现场探测复核。
     """
     with STATUS_SNAP_LOCK:
         v = STATUS_SNAP["val"]
         fresh = isinstance(v, dict) and (time.time() - STATUS_SNAP["ts"]) <= STATUS_TTL
-    if fresh:
-        return bool(v.get("loggedIn"))
-    try:
-        return bool(status_probe_blocking(wait=8).get("loggedIn"))
-    except Exception:
+    if fresh and not v.get("loggedIn"):
         return False
+    return _verify_logged_in()[0]
+
+
+def _note_logged_in(url="", who=""):
+    """登录成功后立刻把快照刷成「已登录」。
+
+    为什么必须做：快照是后台线程每 15 秒养一份的。登录成功之后如果不等它自然
+    刷新，界面紧接着去问「现在登上了吗」读到的还是**旧的「未登录」** ——
+    刚登录成功却显示失败，用户会以为密码错了，去反复改密码。
+    """
+    val = {"loggedIn": True, "url": url, "user": who, "msg": "", "reason": ""}
+    try:
+        val["hasCreds"] = bool(has_credentials())
+    except Exception:
+        val["hasCreds"] = False
+    with STATUS_SNAP_LOCK:
+        STATUS_SNAP["val"] = val
+        STATUS_SNAP["ts"] = time.time()
+        STATUS_SNAP["busy"] = False
+
+
+def _verify_logged_in():
+    """现场确认一次登录态。返回 (是否登录, 用户名, 说明)。
+
+    ★ 为什么不能再看快照 ★
+    原来这里读的是后台养着的那份快照，只要新鲜就直接采信。后果是**假成功**：
+    上一段会话（甚至别人的号）留下的快照还在 15 秒窗口里，用户输了个错密码，
+    照样被告知「登录成功」。假成功比假失败更坏 —— 用户以为一切正常，
+    之后在「数据怎么一直是旧的」上折腾半天。
+    现在改成现场探一次。它**不走快照线程**（那会在 /api/login 已持锁时
+    自己跟自己抢锁，白等一轮），而是直接在当前线程探。
+    """
+    try:
+        st = get_status()
+    except Exception as e:
+        return False, "", "%s: %s" % (type(e).__name__, e)
+    if st.get("loggedIn"):
+        return True, (st.get("user") or ""), ""
+    return False, "", (st.get("reason") or st.get("msg") or "")
 
 
 def login(login_name, password, remember=True):
@@ -1675,17 +1774,33 @@ def login(login_name, password, remember=True):
     ——① 用户没勾也被存；② 用户打错密码又被「已登录」短路时，错误密码会被写进
     钥匙串，之后自动重登全废。
     """
-    # ★ 已经登着了就直接算成功，别去开浏览器再登一遍 ★
-    #   不然会走进下面 NOFORM 那条路：已经登录时打开 /login 会被 ManageBac
-    #   直接重定向到看板，页面上根本没有账号框，脚本于是返回 NOFORM，
-    #   引导页把它当失败弹出来 —— 用户明明登好了，却一直看到
-    #   「提交登录失败：NOFORM」，点一次弹一次。
-    if _already_logged_in():
+    # ① 浏览器都没就绪就不要往下走。
+    #    往下走只会在 ab() 那里拿到一句底层英文报错（"Failed to launch Chrome
+    #    at ...: No such file or directory"），而这时候该告诉用户的是
+    #    「正在自动准备浏览器，约 150MB，过几分钟点一次重试」——
+    #    两者的下一步动作完全不同。
+    ready, hint = ensure_browser_ready()
+    if not ready:
+        return False, (hint or
+                       "正在自动准备浏览器（首次约 150MB），稍等几分钟再点一次「登录」。")
+
+    # ② 再确认是不是已经登着了。**必须现场确认**，不能只看快照：
+    #    看快照 → 假成功；不看直接走表单 → 已登录时打开 /login 会被重定向到
+    #    看板，页面上没有账号框，脚本返回 NOFORM → 假失败。
+    done, who, _ = _verify_logged_in()
+    if done:
+        _note_logged_in(who=who)
         return True, "登录成功"
 
     rc, out = ab(["open", login_url()], timeout=120)
     if rc != 0:
-        return False, "无法打开登录页：" + out[:150]
+        # ★ 这里以前直接把 agent-browser 的英文原始报错吐给用户 ★
+        #   典型长这样：
+        #     Failed to launch Chrome at /Users/xxx/.mbboard/chrome/...:
+        #     No such file or directory
+        #   用户完全不知道该做什么。而真正的三种原因（浏览器还没准备好 /
+        #   连不上学校网站 / 抓取组件缺失）在屏幕上要给的**下一步动作完全不同**。
+        return False, _ab_err_text(out)
     ab(["wait", "2500"], timeout=60)
     ab(["eval", COOKIE_JS], timeout=60)
 
@@ -1715,19 +1830,40 @@ def login(login_name, password, remember=True):
         rc, out = ab_eval(js, timeout=90)
     if "SUBMITTED" not in out:
         if "NOFORM" in (out or ""):
-            if _already_logged_in():
+            done, who, _ = _verify_logged_in()
+            if done:
+                _note_logged_in(who=who)
                 return True, "登录成功"
-            return False, "登录页没有出现账号/密码框，请点「检查当前状态」看看，或稍后重试"
-        return False, "提交登录失败：" + out[:150]
+            return False, "登录页没有出现账号/密码框。点「检查当前状态」看看，或稍后重试。"
+        return False, _ab_err_text(out) or ("提交登录失败：" + (out or "")[:150])
 
-    for _ in range(12):
+    for _ in range(15):
         time.sleep(2)
         st = get_status()
+        if st.get("preparing"):
+            # 浏览器还在后台准备（首次约 150MB）。这**不是**账号密码问题，
+            # 必须原样告诉用户，否则他会去改密码。
+            return False, (st.get("reason") or st.get("msg")
+                           or "浏览器还在自动准备，稍等一下再点一次登录")
         if st["loggedIn"]:
             save_cookies()              # 登录成功后立即持久化，之后关浏览器也不会掉线
             RESTORED["done"] = True
+            _note_logged_in(st.get("url", ""), st.get("user", ""))
             return True, "登录成功"
-    return False, "登录未成功：账号或密码可能有误，或需要额外验证"
+
+    # 走到这里 = 表单提交成功了，但一直没变成「已登录」。
+    # ★ 别再一律甩「账号或密码可能有误」★ 网络不通时那句话会把用户引去
+    #   反复改密码（实测就是这么发生的）。用最后一次探测的 reason 判断到底是
+    #   哪一类失败，能说清就说清。
+    try:
+        st = get_status()
+        why = (st.get("reason") or st.get("msg") or "").strip()
+    except Exception:
+        why = ""
+    if why:
+        return False, why
+    return False, ("登录没成功：账号或密码可能不对；也可能学校网站这次没响应，"
+                   "或需要额外验证（如双重验证）。点「检查当前状态」可以看详情。")
 
 
 def _fetch_blocking():
@@ -2064,8 +2200,15 @@ def fetch_data(force=False):
         # 看板一直卡在「正在读取数据…」。现在起后台抓，立刻回一个占位负载，
         # 界面先出骨架，数据几秒后由后台自动补上（客户端见 updating 会轮询）。
         start_background_refresh()
+        # ★ 这里的 loggedIn 以前写的是 True —— 那是**谎报**。
+        #   冷启动这一刻我们根本不知道用户登没登录（后台正在抓），却告诉前端
+        #   「已登录、一切正常」。前端据此把状态标成绿的、给用户一个「数据已就绪」，
+        #   而屏幕上只有空课表；更要命的是后台抓取一旦失败（没登录 / 浏览器起不来），
+        #   这个假绿会一直挂着，真实原因一个字都传不上去 —— 用户只能得出
+        #   「登录失败了但不知道为什么」这个结论。
+        #   改成 None（未知），和 /api/snapshot 的处理保持一致：不确定就别猜。
         return {"ok": True, "updating": True, "stale": False,
-                "preparing": True, "loggedIn": True,
+                "preparing": True, "loggedIn": None,
                 "tasks": [], "recent": [], "classes": [], "events": [],
                 "fetchedAt": now}
 
@@ -2086,8 +2229,11 @@ def fetch_data(force=False):
 
 def save_cookies():
     """把 ManageBac 的登录 Cookie 存到本机（浏览器关闭后仍可恢复）"""
-    rc, out = ab(["cookies", "get", "--json"], timeout=60)
-    d = _json_from(out)
+    if engine_online():
+        d = we.cookies_get()
+    else:
+        rc, out = ab(["cookies", "get", "--json"], timeout=60)
+        d = _json_from(out)
     if isinstance(d, dict) and not d.get("cookies"):
         inner = d.get("data")
         if isinstance(inner, (dict, list)):
@@ -2118,6 +2264,37 @@ def restore_cookies():
         return 0
     if not isinstance(arr, list):
         return 0
+
+    # ★ 内置引擎在线时**一次性**灌进去 ★
+    #   下面那条老路是一条 cookie 起一个进程（一次 subprocess + 一次往返），
+    #   十几条就是十几秒；而这段代码在冷启动路径上，用户看到的就是
+    #   「点了登录，转了半天还没动静」。
+    if engine_online():
+        batch = []
+        for c in arr:
+            if not isinstance(c, dict) or not c.get("name"):
+                continue
+            dom = str(c.get("domain") or "")
+            if not dom:
+                continue
+            d = {"name": str(c["name"]), "value": str(c.get("value") or ""),
+                 "domain": dom, "path": str(c.get("path") or "/")}
+            if c.get("httpOnly"):
+                d["httpOnly"] = True
+            if c.get("secure"):
+                d["secure"] = True
+            try:
+                exp = float(c.get("expires") or 0)
+            except Exception:
+                exp = 0
+            if exp > 0:
+                d["expires"] = exp
+            batch.append(d)
+        n = we.cookies_set(batch) if batch else 0
+        if n:
+            return n
+        # 一条都没写成功就往下走老路 —— 让老的报错路径原样把原因带出来
+
     n = 0
     for c in arr:
         if not isinstance(c, dict):
@@ -2625,6 +2802,48 @@ def seiue_module():
     return _SEIUE_MOD["m"]
 
 
+# 「用户已进场」的一次性开关 —— App 收到用户点「让我们开始吧」之后调
+# POST /api/ready 把它翻过来。
+#
+# ★ 为什么需要它 ★
+#   后端是 App 一启动就起来的，比开场动画早得多。而 seiue.py 里那几档
+#   「去用户的下载 / 桌面 / 文稿里找课表」的扫描一旦在开场就跑，macOS 会
+#   立刻弹「想要访问您的下载文件夹」—— 正好盖在快闪 / hello 上。用户的原话：
+#       「这种弹窗都要放到用户点击『让我们开始吧』这个按钮之后，
+#         不要影响前面动画的观感」
+#   所以用户目录的扫描被上了两道锁：① 只有用户主动触发的接口（同步 /
+#   导入课表）才会宽扫；② 宽扫还要等这盏灯亮。灯只亮一次，之后全部放行。
+_USER_READY = {"on": False, "logged": False}
+
+
+def mark_user_ready():
+    """App 报「用户已进场」。幂等，重复调只记一次日志。"""
+    _USER_READY["on"] = True
+    m = seiue_module()
+    if m is not None:
+        try:
+            m.mark_user_ready()
+        except Exception:
+            pass
+    if not _USER_READY["logged"]:
+        _USER_READY["logged"] = True
+        print("用户已进场：放开用户目录（下载 / 桌面 / 文稿）的扫描。", flush=True)
+    return True
+
+
+def user_ready():
+    """用户是否已经进场（seiue 侧另有兜底，见 seiue.user_ready）。"""
+    if _USER_READY["on"]:
+        return True
+    m = seiue_module()
+    if m is not None:
+        try:
+            return bool(m.user_ready())
+        except Exception:
+            pass
+    return False
+
+
 # ── 登录态快照 ────────────────────────────────────────────────────────
 # 为什么非要搞这么一层：`mssession.auth_state()` 在令牌缓存为空时会去
 # **现场取令牌** —— 那是一条会重载页面、重试十几次的慢路径（最坏几分钟）。
@@ -2652,6 +2871,12 @@ def _auth_fast():
             up = False
     return {"loggedIn": False, "account": "", "granted": [], "missing": [],
             "browserUp": up, "browserPort": port, "browserUrl": url,
+            # ★ engine 也在这里带上 ★
+            #   冷启动的头 20 秒界面读的是这一份（快照还没刷出来）。要是不带，
+            #   用户开看板的第一眼会看到「去找浏览器」而不是「App 内置浏览器」，
+            #   然后 20 秒后自己变过来 —— 一条很容易被当成 bug 的闪烁。
+            #   engine_online() 只读一个时间戳，不碰浏览器，放在这里零成本。
+            "engine": engine_online(),
             "error": "正在读取登录态…", "tokenExpIn": 0, "warmup": True}
 
 
@@ -2911,13 +3136,18 @@ def teams_payload():
                 def _revive():
                     try:
                         m.ms.keep_alive()      # 静默启动：窗口在屏幕外，不打扰用户
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        # ★ 别静默 ★ 这里失败 = Teams 板块会一直停在「未连接」，
+                        #   而原因是「浏览器起不来」或「找不到浏览器」。用户只看到
+                        #   一句「没应答」，日志里却什么都没有 —— 没法查。
+                        msg = "Teams 浏览器自动拉回失败：%s: %s" % (type(e).__name__, e)
+                        print(msg, flush=True)
+                        TEAMS["error"] = msg
                     finally:
                         TEAMS["reviving"] = False
                 threading.Thread(target=_revive, daemon=True).start()
-        except Exception:
-            pass
+        except Exception as e:
+            print("Teams 保活检查出错：%s: %s" % (type(e).__name__, e), flush=True)
 
     # 「已登录」不该只看这一刻的缓存：bridge 刚重启、浏览器还没拉起来时
     # 令牌缓存是空的，但磁盘上明明存着上次抓到的内容 —— 那种情况下也该
@@ -2964,10 +3194,20 @@ def teams_start_login():
     m = teams_module()
     if m is None:
         return {"ok": False, "error": "Teams 模块加载失败：" + str(_TEAMS_MOD["err"])}
+    # ★ Teams 这条入口以前**从不触发**浏览器准备 ★
+    #   只有 ManageBac 那条路会调 ensure_chrome_async()。于是用户要是跳过了
+    #   ManageBac 直接来连 Teams，就必然撞上「找不到 Chrome for Testing」，
+    #   屏幕上还没有任何「正在准备」的提示 —— 看起来就是这功能彻底坏了。
+    ready, hint = ensure_browser_ready()
     TEAMS["loggingIn"] = True
     TEAMS["error"] = None
-    TEAMS["loginMsg"] = "正在打开登录窗口…"
+    TEAMS["loginMsg"] = "正在打开登录窗口…" if ready else (hint or "正在准备浏览器…")
     TEAMS["loginStep"] = 0
+    if not ready:
+        # 还没准备好就**不要**往下走：往下走只会拿到一句底层英文报错。
+        TEAMS["loggingIn"] = False
+        TEAMS["error"] = TEAMS["loginMsg"]
+        return {"ok": False, "preparing": True, "msg": TEAMS["loginMsg"]}
 
     def progress(msg):
         TEAMS["loginMsg"] = msg
@@ -3216,6 +3456,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self._json(request_refresh(float(raw) if raw else None))
             except ValueError:
                 return self._json(request_refresh())
+        if path == "/api/ready":
+            # 「用户已进场」—— App 在用户点下「让我们开始吧」那一刻调的。
+            # 放开用户目录（下载 / 桌面 / 文稿）的扫描闸门：在那之前后端只扫
+            # 自己的 EXPORT_DIR，绝不列用户的文件夹 —— 否则 macOS 的
+            # 「想要访问您的下载文件夹」授权框会直接盖在开场动画上。
+            if not self._trusted():
+                return self._json({"ok": False, "error": "forbidden"}, 403)
+            mark_user_ready()
+            return self._json({"ok": True, "ready": True})
         if path == "/api/net":
             # 会暴露主机名 / 内网地址，只给本机看
             if not self._trusted():
@@ -3235,8 +3484,50 @@ class Handler(http.server.BaseHTTPRequestHandler):
             d["ok"] = True
             return self._json(d)
 
+        # ---- 内置网页引擎：App 里的浏览器来领活 ----
+        # ★ 这是 App ↔ 后端之间**唯一**一条 Python 主动、Swift 被动方向的路 ★
+        #   其它接口都是 Swift 问、Python 答。这条反过来：Python 把「打开这个
+        #   网址」「执行这段脚本」放进队列，App 拿走、做完、把结果塞回来。
+        #   好处是不新增端口、不新增协议，出问题 curl 一下就能看见。
+        if path == "/api/webengine/poll":
+            if we is None:
+                return self._json({"cmd": None, "error": "webengine 模块没加载起来"})
+            try:
+                wait = float(qs.get("wait", ["20"])[0])
+            except (TypeError, ValueError):
+                wait = 20.0
+            wait = max(0.0, min(60.0, wait))
+            # 记「有人在线」必须在**等之前**，而且整个等待期间都算数 ——
+            # 引擎空闲时一直挂在这里，不记的话业务侧会以为它不在。
+            we.note_poll_start()
+            try:
+                end = time.time() + wait
+                while True:
+                    c = we.take_pending()
+                    if c:
+                        return self._json({"cmd": c})
+                    if time.time() >= end:
+                        return self._json({"cmd": None})
+                    time.sleep(0.05)
+            finally:
+                we.note_poll_end()
+
+        if path == "/api/webengine/state":
+            # 引擎状态（本机调试 + 界面展示）
+            if we is None:
+                return self._json({"ok": False, "error": "webengine 模块没加载起来"})
+            on = we.attached()
+            d = {"ok": True, "attached": on, "pending": we.pending_count(),
+                 "engine": True}
+            if on:
+                r = we.state()
+                d.update({"tabs": r.get("tabs", 0), "urls": r.get("urls", []),
+                          "ready": r.get("ready", False)})
+            d["chrome"] = chrome_state()
+            return self._json(d)
+
         if path in ("/", "/api/health"):
-            return self._json({"ok": True, "service": "ManageBac 看板桥接服务", "port": PORT,
+            return self._json({"ok": True, "service": "ManageBac-Buddy桥接服务", "port": PORT,
                                "v": VERSION, "hasData": bool(CACHE["data"]),
                                "refreshing": bool(REFRESHING["on"]),
                                "urls": (lan_urls() if self._trusted() else []),
@@ -3297,11 +3588,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
                             m.ms.ensure_browser()
                             # 保活启动的窗口停在屏幕外，用户看不到就没法登录 —— 搬回来置前
                             m.ms.show_browser()
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            # ★ 别静默 ★ 这一步失败 = 用户点了「连接微软账号」之后
+                            #   什么也没弹出来，屏幕上一点提示都没有，他只会以为
+                            #   「这功能坏了」。把原因写进日志，TEAMS["error"] 也同步，
+                            #   界面上的状态行就能说清。
+                            msg = "打开微软登录窗口失败：%s: %s" % (type(e).__name__, e)
+                            print(msg, flush=True)
+                            TEAMS["error"] = msg
+                            TEAMS["loginMsg"] = msg
                     threading.Thread(target=_open_login, daemon=True).start()
-            except Exception:
-                pass
+            except Exception as e:
+                print("连接微软账号入口出错：%s: %s" % (type(e).__name__, e), flush=True)
             self.send_response(302)
             self.send_header("Location", url)
             self.send_header("Content-Length", "0")
@@ -3373,6 +3671,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             data = json.loads(raw)
         except Exception:
             data = {}
+        if path == "/api/ready":
+            # 同 do_GET 里的说明：这是「用户已进场」的闸门。
+            mark_user_ready()
+            return self._json({"ok": True, "ready": True})
         if path == "/api/prefetch":
             # 设置任务详情预取间隔（秒；0=关）。只允许本机。
             try:
@@ -3388,12 +3690,59 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/teams/login":
             # 拉起浏览器完成微软授权；前端轮询 /api/teams 看结果
             return self._json(teams_start_login())
+
+        # ---- 内置网页引擎（见 do_GET 里 /api/webengine/poll 的说明）----
+        if path == "/api/webengine/result":
+            if we is None:
+                return self._json({"ok": False, "error": "webengine 模块没加载起来"})
+            cid = str(data.get("id") or "")
+            if not cid:
+                return self._json({"ok": False, "error": "缺 id"})
+            got = we.deliver(cid, bool(data.get("ok")),
+                             data.get("value"), data.get("error") or "")
+            # got=False 只说明「这一单已经超时走掉了」，不是错误 ——
+            # 界面可能刚好在这一刻退出登录，没必要让它报警。
+            return self._json({"ok": True, "matched": bool(got)})
+
+        if path == "/api/webengine/call":
+            # webengine.py 被当命令行起起来时走这条（bridge 的 _ab_raw 会 fork）。
+            # 本进程内的调用直接用内存队列，不经过这里。
+            if we is None:
+                return self._json({"ok": False, "error": "webengine 模块没加载起来"})
+            op = str(data.get("op") or "")
+            args = data.get("args") or {}
+            if not op:
+                return self._json({"ok": False, "error": "缺 op"})
+            if not isinstance(args, dict):
+                return self._json({"ok": False, "error": "args 必须是对象"})
+            # 每种指令的合理等待上限。eval 要跑页面脚本，给得宽一些；
+            # 其余都是毫秒级，卡住就说明引擎出问题了，早点报错比干等有用。
+            cap = {"eval": 100.0, "open": 70.0, "cookies_set": 45.0,
+                   "cookies_get": 30.0, "clear_data": 65.0}.get(op, 35.0)
+            try:
+                cap = min(cap, float(data.get("timeout") or cap))
+            except (TypeError, ValueError):
+                pass
+            r = we.call(op, timeout=cap, **args)
+            r["ok"] = bool(r.get("ok"))
+            return self._json(r)
+        if path == "/api/browser/prepare":
+            # 界面上的「准备浏览器」：一个 Chromium 都没有时手动踢一脚下载。
+            # 三条件入口（ManageBac / Teams / 希悦）已会自动触发，这个接口是
+            # 给「我就是想先把它准备好」和出错后重试用的。
+            ensure_chrome_async()
+            return self._json(dict(chrome_state(), ok=True))
         if path == "/api/seiue/login":
             # 拉起希悦登录窗口（专用配置目录，登录态长期保留）
             # 走 open_home：顺带把窗口摆到屏幕正中 + 把下载目录指到我们认得的地方
             m = seiue_module()
             if not m:
                 return self._json({"ok": False, "msg": _SEIUE_MOD.get("err") or "希悦模块没加载成功"})
+            # 和 Teams 同一个理由：这条入口以前也不触发浏览器准备。
+            ready, hint = ensure_browser_ready()
+            if not ready:
+                return self._json({"ok": False, "preparing": True,
+                                   "msg": hint or "正在准备浏览器…"})
             try:
                 r = m.open_home()
             except Exception:
@@ -3405,6 +3754,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             m = seiue_module()
             if not m:
                 return self._json({"ok": False, "msg": _SEIUE_MOD.get("err") or "希悦模块没加载成功"})
+            # 这是用户自己点的按钮 —— 顺带把「已进场」的闸门也推上去，
+            # 免得宽扫被闸门挡住（这条接口本来就不可能出现在开场动画之前）。
+            mark_user_ready()
             try:
                 p = (data.get("path") or "").strip() or None
                 r = m.import_exported(p)
@@ -3420,6 +3772,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             m = seiue_module()
             if not m:
                 return self._json({"ok": False, "msg": _SEIUE_MOD.get("err") or "希悦模块没加载成功"})
+            ready, hint = ensure_browser_ready()
+            if not ready:
+                return self._json({"ok": False, "preparing": True,
+                                   "msg": hint or "正在准备浏览器…"})
+            # 用户点的同步 —— 同上，把「已进场」闸门推上去。
+            mark_user_ready()
             try:
                 r = m.sync_now()
                 return self._json(r)
@@ -3560,12 +3918,22 @@ def seiue_watch_loop():
     """盯着「网页导出的课表」：用户一下载完就自动认出来。
 
     用户的原话是「不要让用户需要拖拽文件到 APP 直接识别」——所以这一步
-    必须是自动的，不能只留一个按钮。每 15 秒看一眼下载/桌面/文稿里有没有
-    **新出现或刚改过**的 xlsx，有就解析一次；同一个文件只处理一次
+    必须是自动的，不能只留一个按钮。每 15 秒看一眼**我们自己的导出目录**
+    里有没有**新出现或刚改过**的 xlsx，有就解析一次；同一个文件只处理一次
     （靠 mtime+路径 当指纹），所以不会反复读盘、更不会把用户刚改的课表
     改回去。
+
+    ★ 这里只扫 EXPORT_DIR（窄扫），**不碰用户的下载 / 桌面 / 文稿** ★
+      网页导出的表本来就是 _set_download_dir 指到 EXPORT_DIR 的，
+      窄扫足够认领，功能一点不损。反过来，要是这个每 15 秒的循环去列
+      用户的下载夹，macOS 会弹「想要访问您的下载文件夹」授权框 —— 而且
+      因为它每 15 秒跑一次，那个框会反复出现在开场动画上。用户明确要求
+      「这种弹窗都要放到用户点击『让我们开始吧』之后」。
+      用户的下载夹只在**用户自己点**「同步 / 导入课表」时才去找
+      （见 seiue._scan_dirs 的 broad 档）。
     """
     last = ""
+    last_err = ""
     while True:
         time.sleep(15)
         try:
@@ -3578,16 +3946,29 @@ def seiue_watch_loop():
             last = stamp                      # 先记账：解析失败也别每 15 秒重来一次
             r = m.import_exported()
             if r.get("ok"):
-                n = len(r.get("lessons") or [])
                 print("希悦：已识别网页导出的课表 %s（%d 节）"
-                      % (os.path.basename(r.get("file") or ""), n), flush=True)
+                      % (os.path.basename(r.get("file") or ""), len(r.get("lessons") or [])),
+                      flush=True)
                 # 顺手把课表推给手表/中继，别让它一直显示上一份
                 try:
                     relay_push()
-                except Exception:
-                    pass
-        except Exception:
-            pass
+                except Exception as e:
+                    print("希悦：推送中继失败：%s: %s" % (type(e).__name__, e), flush=True)
+            else:
+                # 不 ok 也要说话：以前这里一声不吭，用户「导出了课表却没被识别」
+                # 只能看到「什么都没发生」。
+                print("希悦：认出了新导出的课表文件但没解析成功：%s"
+                      % (r.get("msg") or r.get("error") or ""), flush=True)
+        except Exception as e:
+            # ★ 别静默 ★ 这个循环每 15 秒跑一次，出错时**必须**留下痕迹，
+            #   否则「自动识别课表时好时坏」永远查不出来。
+            #   但也不能每 15 秒刷一行同样的错 —— 只在错误内容变化时打一行，
+            #   第一次出现时一定打。
+            msg = "%s: %s" % (type(e).__name__, e)
+            if msg != last_err:
+                last_err = msg
+                print("希悦：自动识别课表这一轮出错（后续同样的错不再重复打印）：%s" % msg,
+                      flush=True)
 
 
 def main():
@@ -3603,7 +3984,7 @@ def main():
             print("已回收 %d 个上次遗留的浏览器进程。" % n, flush=True)
     except Exception:
         pass
-    print("ManageBac 看板桥接服务已启动： http://127.0.0.1:%d" % PORT, flush=True)
+    print("ManageBac-Buddy桥接服务已启动： http://127.0.0.1:%d" % PORT, flush=True)
     if HOST in ("127.0.0.1", "localhost"):
         print("⚠️ 只监听本机（MBBOARD_HOST=%s）：手表走 WiFi 连不上，改成 0.0.0.0" % HOST, flush=True)
     else:
@@ -3617,7 +3998,7 @@ def main():
         threading.Thread(target=relay_loop, daemon=True).start()
     else:
         print("云端中转未启用（缺 %s）；手表只有在同一 WiFi 下才连得上。" % RELAY_FILE, flush=True)
-    print("Chrome: %s" % CHROME, flush=True)
+    print("浏览器: %s" % (chrome_path() or "(还没找到，将在需要时自动准备)"), flush=True)
     if IDLE_TIMEOUT <= 0:
         print("常驻模式：不因空闲退出（MBBOARD_IDLE=0）。", flush=True)
     elif RELAY["on"]:

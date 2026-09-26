@@ -141,7 +141,13 @@ struct SettingsSection: View {
                 }
                 Spacer(minLength: env.space(10))
                 Button {
-                    withAnimation(Motion.spring(0.36)) { settings.onboarded = false }
+                    // 两个标记一起清 —— introPlayed 不清的话，引导会接上，
+                    // 但开场那两幕（MB Buddy 快闪 + 彩虹 hello）不会演，
+                    // 而「重走新手导览也会触发」是用户明确要的。
+                    withAnimation(Motion.spring(0.36)) {
+                        settings.onboarded = false
+                        settings.introPlayed = false
+                    }
                 } label: {
                     Text("开始引导")
                         .font(.system(size: 12.5, weight: .semibold))
@@ -2037,23 +2043,47 @@ struct AccentSwatch: View {
     }
 }
 
-/* ---------------- 开机自启 ---------------- */
+/* ---------------- 开机自启 ----------------
+
+   ★ 这里以前是坏的，v3.5 修的 ★
+   旧写法把目标写死成 `/Applications/ManageBac 菜单栏.app` —— 那是一个
+   第 18 轮就被合并掉的独立 App（菜单栏面板现在是主 App 的一部分，
+   同一个二进制、同一个进程）。于是一打开「开机自启」，写出来的
+   LaunchAgent 就指向一个不存在的路径：`open -a` 静默失败，
+   开关看着是开的、开机什么都不发生。
+   这类 bug 最难被发现 —— 它不报错，只是让一个开关变成谎话。
+
+   现在让 App 自己报路径（`Bundle.main.bundlePath`）。它在哪就写哪，
+   不依赖任何写死的安装位置 —— 放桌面、放应用程序、改名，都跟得上。
+   Label 也跟着真正的 Bundle ID 走，不必再维护一份平行的名字。 */
 
 enum LaunchAtLogin {
-    static let label = "com.mbboard.menubar"
+    /// LaunchAgent 的文件名 / Label。直接用本 App 的 Bundle ID ——
+    /// 它本来就是这个「身份」的唯一权威，另起一个名字只会多一处要同步的地方。
+    static var label: String {
+        Bundle.main.bundleIdentifier ?? "com.mbboard.buddy"
+    }
+
+    /// 历史 Label。它们指向的是已经不存在的旧 App，留着只会在开机时
+    /// 静默失败一次，顺手清掉。
+    private static let legacyLabels = ["com.mbboard.menubar", "com.oscar.mbboard.menubar"]
+
+    private static var agentsDir: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/LaunchAgents", isDirectory: true)
+    }
 
     static func set(_ on: Bool) {
-        let agents = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/LaunchAgents", isDirectory: true)
-        let plist = agents.appendingPathComponent("\(label).plist")
+        let plist = agentsDir.appendingPathComponent("\(label).plist")
+        for old in legacyLabels {
+            try? FileManager.default.removeItem(at: agentsDir.appendingPathComponent("\(old).plist"))
+        }
         if !on {
             try? FileManager.default.removeItem(at: plist)
             return
         }
-        let appPath = "/Applications/ManageBac 菜单栏.app"
-        let fallback = NSHomeDirectory() + "/Desktop/ManageBac 看板 For Mac/ManageBac 菜单栏.app"
-        let target = FileManager.default.fileExists(atPath: appPath) ? appPath : fallback
-        try? FileManager.default.createDirectory(at: agents, withIntermediateDirectories: true)
+        let target = Bundle.main.bundlePath
+        try? FileManager.default.createDirectory(at: agentsDir, withIntermediateDirectories: true)
         let xml = """
         <?xml version="1.0" encoding="UTF-8"?>
         <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

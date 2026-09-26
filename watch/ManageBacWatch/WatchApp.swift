@@ -3,7 +3,7 @@
 //  新建文件（菜单栏版 App.swift 未改动）。
 //
 //  这是一个「独立 watch App」（watch-only，不需要 iPhone 配套 App）。
-//  数据来自这台 Mac 上跑着的 ManageBac 看板桥接服务（http://127.0.0.1:8765）。
+//  数据来自这台 Mac 上跑着的 ManageBac-Buddy桥接服务（http://127.0.0.1:8765）。
 //
 //  调试用环境变量（只在命令行启动时有意义）：
 //    MBWATCH_DUMP=1        启动后把派生数据（待办排序/课堂/最新成绩/GPA）打印到控制台

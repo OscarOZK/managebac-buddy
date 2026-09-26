@@ -110,7 +110,9 @@ final class AccountsCenter: ObservableObject {
         // 用户手动点的时候（!quiet）才现场探；自动/静默轮询读快照，毫秒级。
         guard let d = await Bridge.manageBacStatus(probe: !quiet) else {
             mbLogged = false
-            line[.managebac] = "看板没起来 —— 点右上「重连」或重启 App"
+            // 以前这里恒为「看板没起来 —— 点右上重连」。可原因不一定是「没起来」：
+            // 也可能是处理超时、回包看不懂。把真正的原因带出来。
+            line[.managebac] = Bridge.text(nil, "看板没应答 —— 点右上「重连」")
             return
         }
         mbLogged = (d["loggedIn"] as? Bool) ?? false
@@ -127,7 +129,7 @@ final class AccountsCenter: ObservableObject {
         // 45 秒：服务端已把「现场取令牌」挪到后台，正常回包在毫秒级；
         // 留宽只为防浏览器正好在重启这类极端情况。
         guard let d = await Bridge.get("/api/teams", timeout: 45) else {
-            line[.teams] = "看板没应答"
+            line[.teams] = Bridge.text(nil, "看板没应答")
             return
         }
         teamsLogged = (d["loggedIn"] as? Bool) ?? false
@@ -150,7 +152,7 @@ final class AccountsCenter: ObservableObject {
         // 60 秒：希悦这一趟可能要走「开浏览器 → 回首页 → 读整张课表」，
         // 冷启动比 Teams 还慢一档；缓存命中时是毫秒级。
         guard let d = await Bridge.get("/api/seiue", timeout: 60) else {
-            line[.seiue] = "看板没应答"
+            line[.seiue] = Bridge.text(nil, "看板没应答")
             return
         }
         let st = (d["status"] as? [String: Any]) ?? [:]
@@ -196,12 +198,20 @@ final class AccountsCenter: ObservableObject {
 
     func loginManageBac(_ account: String, _ password: String, save: Bool) async {
         busy = .managebac
-        line[.managebac] = "正在登录…（学校站点偶尔慢，最多等 90 秒）"
-        Bridge.launchIfNeeded()
-        for _ in 0..<20 { if await DataStore.shared.healthy() { break }; try? await Task.sleep(nanoseconds: 400_000_000) }
+        line[.managebac] = "正在连接本机服务…"
+        // 和引导页同一条逻辑：等到服务真能用、或拿到「为什么起不来」。
+        if let why = await Bridge.waitReady() {
+            busy = nil
+            line[.managebac] = why
+            return
+        }
+        line[.managebac] = "正在登录…（学校站点偶尔慢，最多等 3 分钟）"
+        // 180 秒：服务端最坏路径是「开浏览器 120s + 填表 + 轮询 30s」。
+        // 原来这里是 110 秒 —— 服务端还在正常干活，客户端先判了超时，
+        // 显示出来的却是「登录失败：检查账号密码」。
         let r = await Bridge.post("/api/login", [
             "login": account.trimmed, "password": password, "remember": true, "save": save,
-        ], timeout: 110)
+        ], timeout: 180)
         busy = nil
         let ok = Bridge.ok(r)
         mbLogged = ok
@@ -231,9 +241,14 @@ final class AccountsCenter: ObservableObject {
 
     func loginTeams() async {
         busy = .teams
+        line[.teams] = "正在连接本机服务…"
+        if let why = await Bridge.waitReady() {
+            busy = nil
+            line[.teams] = why
+            return
+        }
         line[.teams] = "正在打开浏览器…"
-        Bridge.launchIfNeeded()
-        let r = await Bridge.post("/api/teams/login", [:], timeout: 45)
+        let r = await Bridge.post("/api/teams/login", [:], timeout: 60)
         busy = nil
         line[.teams] = Bridge.ok(r) ? "浏览器已打开，请在窗口里完成登录（这边会自动识别）"
                                     : Bridge.msg(r, "打开失败，稍后重试")
@@ -252,8 +267,13 @@ final class AccountsCenter: ObservableObject {
 
     func loginSeiue() async {
         busy = .seiue
+        line[.seiue] = "正在连接本机服务…"
+        if let why = await Bridge.waitReady() {
+            busy = nil
+            line[.seiue] = why
+            return
+        }
         line[.seiue] = "正在打开希悦登录窗口…"
-        Bridge.launchIfNeeded()
         let r = await Bridge.post("/api/seiue/login", [:], timeout: 60)
         busy = nil
         line[.seiue] = Bridge.ok(r) ? "登录窗口已打开，登完点「同步课表」"
@@ -312,15 +332,18 @@ final class AccountsCenter: ObservableObject {
     func reconnectBridge() async {
         busy = .managebac
         line[.managebac] = "正在启动看板…"
-        Bridge.launchIfNeeded()
-        for _ in 0..<24 {
-            if await DataStore.shared.healthy() { break }
-            try? await Task.sleep(nanoseconds: 500_000_000)
+        // ★ 拿到明确原因就立刻停 ★ 以前这里是无脑等 12 秒，然后写一句
+        //   「还是连不上 —— 把 App 退掉重开一次」——重开也没用，因为
+        //   真正的原因（比如这台机器上找不到可用的运行环境）一个字都没露出来。
+        if let why = await Bridge.waitReady() {
+            busy = nil
+            line[.managebac] = why
+            return
         }
         busy = nil
         await refreshAll(quiet: true)
         if !mbLogged && teamsLogged == false && !seiueLogged {
-            line[.managebac] = "还是连不上 —— 把 App 退掉重开一次"
+            line[.managebac] = "服务起来了，但三张卡都还没连上 —— 点各自的按钮登一次"
         }
     }
 

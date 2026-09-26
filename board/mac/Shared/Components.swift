@@ -1274,7 +1274,7 @@ enum DashSection: String, CaseIterable, Identifiable {
    ----------------------------------------------------------------------
    用户的要求：通知这一页最底下要把「为什么收不到」写清楚，而且**两种可能
    都要说**（① 系统里没允许本 App 发通知 ② Mac 开了勿扰 / 专注模式），
-   第一种还要给一个按钮一步跳到「系统设置 › 通知 › ManageBac 看板」。
+   第一种还要给一个按钮一步跳到「系统设置 › 通知 › ManageBac-Buddy」。
 
    引导页和设置页共用这一个视图 —— 两处说法必须一字不差，
    分开写迟早会说成两件事，用户就更不知道该修哪个了。
@@ -1299,8 +1299,8 @@ struct NotifyTroubleCard: View {
 
             reason(
                 no: "1",
-                title: "系统里没允许 ManageBac 看板发通知",
-                body: "在「系统设置 › 通知 › ManageBac 看板」里，「允许通知」这一项要是关着的，"
+                title: "系统里没允许 ManageBac-Buddy发通知",
+                body: "在「系统设置 › 通知 › ManageBac-Buddy」里，「允许通知」这一项要是关着的，"
                     + "本页怎么开都不会弹出。",
                 action: ("打开系统通知设置", { Notifier.openSystemSettings() })
             )
@@ -1309,7 +1309,7 @@ struct NotifyTroubleCard: View {
                 no: "2",
                 title: "Mac 开着「勿扰模式 / 专注模式」",
                 body: "打开控制中心，看「专注模式」是不是亮着。亮着的话通知会被系统收走，"
-                    + "不会显示横幅；关掉它，或者把「ManageBac 看板」加进允许列表。",
+                    + "不会显示横幅；关掉它，或者把「ManageBac-Buddy」加进允许列表。",
                 action: ("打开专注模式设置", { Notifier.openFocusSettings() })
             )
 

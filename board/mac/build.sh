@@ -1,5 +1,5 @@
 #!/bin/bash
-# ManageBac 看板 · Mac 版一键构建
+# ManageBac-Buddy · Mac 版一键构建
 # 第 18 轮起：主看板 + 菜单栏面板**合并成一个 App**（一个进程、一个通知来源）。
 # 编译 → 生图标 → 组包（含主题原图）→ 签名 → 校验 → 输出到桌面文件夹
 set -e
@@ -7,11 +7,11 @@ set -e
 SRC="${MBBOARD_SRC:-$HOME/.mbboard/board/mac}"
 THEMES="${MBBOARD_THEMES:-$HOME/.mbboard/themes}"
 BACKEND="${MBBOARD_BACKEND:-$HOME/.mbboard}"
-OUT="${MBBOARD_OUT:-$HOME/Desktop/ManageBac-Dashboard}"
+OUT="${MBBOARD_OUT:-$HOME/Desktop/ManageBac-Buddy}"
 # ★ App 名要和 Info.plist 的 CFBundleName / CFBundleDisplayName 一致 ★
-# 三处都叫 ManageBac-Dashboard，Gatekeeper 弹窗和「隐私与安全性」里
+# 三处都叫 ManageBac-Buddy，Gatekeeper 弹窗和「隐私与安全性」里
 # 显示的才是这个名字 —— 安装导览照着屏幕写的，不能对不上。
-APPNAME="ManageBac-Dashboard"
+APPNAME="ManageBac-Buddy"
 TARGET="arm64-apple-macos26.0"
 SWIFTC="/usr/bin/xcrun swiftc"
 
@@ -24,6 +24,9 @@ SHARED=(
   "$SRC/Shared/Bridge.swift" "$SRC/Shared/Shortcuts.swift" "$SRC/Shared/TaskDetail.swift"
   "$SRC/Shared/Deleted.swift"
   "$SRC/Shared/FloatingChrome.swift" "$SRC/Shared/MidAutumn.swift"
+  # 内置网页引擎：把「登录要用的那个浏览器」搬进 App 自己身体里。
+  # 有了它，别人电脑上一个 Chromium 都没装也能登进 ManageBac / Teams / 希悦。
+  "$SRC/Shared/WebEngine.swift"
 )
 DASH=(
   "$SRC/Dashboard/DashApp.swift" "$SRC/Dashboard/DashRoot.swift" "$SRC/Dashboard/DashTodo.swift"
@@ -72,7 +75,7 @@ cp -f "$SRC/Dashboard/ai-inject.js" "$APP/Contents/Resources/ai-inject.js"
 # 后端随包分发。为什么必须带上：
 #   看板的数据全靠本机的 Python 桥接服务，而它以前住在 ~/.mbboard ——
 #   换台电脑就没有，App 只会显示「本地服务未运行」。打进包里之后，
-#   首次启动会把它装到 ~/Library/Application Support/ManageBac 看板/backend/，
+#   首次启动会把它装到 ~/Library/Application Support/ManageBac-Buddy/backend/，
 #   那份数据目录是**全新**的，不含任何人的登录态。
 echo "   · 打包后端（bridge.py + 共享模块）…"
 BKDIR="$APP/Contents/Resources/backend"
@@ -140,7 +143,91 @@ fi
 
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 chmod +x "$APP/Contents/MacOS/MBDashboard"
-# 限时主题的原图要跟着包走，否则换台机器就只剩色板、看不到照片
+
+# ---------------------------------------------------------------------------
+# Python 运行时随包分发 —— 这是「四个账号全都登不进去」的根治办法
+# ---------------------------------------------------------------------------
+# 看板的数据全部来自本机的 Python 桥接服务。以前只能指望「用户电脑上恰好有个
+# 能用的 python3」，而实测这条路在普通 Mac 上并不成立：macOS 自带的
+# /usr/bin/python3 只是一层壳，真正干活的是 Xcode 命令行工具里那份 ——
+# 没装命令行工具的机器上跑它会弹系统弹窗然后退出。结果就是后台静默起不来，
+# 用户看到的是「看板没应答」，而四个集成里唯一能用的那个（DeepSeek）
+# 恰好是唯一不走后端的。自带一份 Python，这一类失败就彻底不存在了。
+#
+# 用 python-build-standalone 的 install_only_stripped 包：自带标准库、
+# 可重定位、不依赖系统任何东西。后端只用标准库（http.server / urllib /
+# subprocess / ssl / sqlite3），所以不需要 pip，也不需要网络。
+echo "   · 打包 Python 运行时…"
+PYRT_REL="20250818"
+PYRT_VER="3.12.11"
+case "$TARGET" in
+  x86_64*) PYRT_TAG="x86_64-apple-darwin"
+           PYRT_SHA="296af6b9dd16f16dca2503a9a1cfc8593e4cd79ed19ee20cb2557da0912cf6b2" ;;
+  *)       PYRT_TAG="aarch64-apple-darwin"
+           PYRT_SHA="bbf0c85d09a8173e50d18a0198f14d1de91eab17a593ccf9445f214fb0555547" ;;
+esac
+PYRT_FILE="cpython-${PYRT_VER}+${PYRT_REL}-${PYRT_TAG}-install_only_stripped.tar.gz"
+PYRT_URL="https://github.com/astral-sh/python-build-standalone/releases/download/${PYRT_REL}/${PYRT_FILE}"
+PYCACHE="$SRC/build/pyrt"              # 缓存在源码目录的 build/ 下，重复构建不再下载
+STAGE="$PYCACHE/stage-$PYRT_TAG"
+PYDEST="$APP/Contents/Resources/python"
+
+if [ ! -x "$STAGE/python/bin/python3" ]; then
+  mkdir -p "$PYCACHE"
+  if [ ! -f "$PYCACHE/$PYRT_FILE" ]; then
+    echo "     · 下载 $PYRT_FILE（约 15MB，只在本机首次构建时下）…"
+    curl -fL --retry 3 --retry-delay 2 -o "$PYCACHE/$PYRT_FILE.part" "$PYRT_URL"
+    mv -f "$PYCACHE/$PYRT_FILE.part" "$PYCACHE/$PYRT_FILE"
+  fi
+  got=$(/usr/bin/shasum -a 256 "$PYCACHE/$PYRT_FILE" | /usr/bin/cut -d' ' -f1)
+  if [ "$got" != "$PYRT_SHA" ]; then
+    echo "   ✘ Python 运行时校验和不符（期望 $PYRT_SHA，拿到 $got），已删除重下" >&2
+    rm -f "$PYCACHE/$PYRT_FILE"
+    exit 1
+  fi
+  rm -rf "$STAGE"
+  mkdir -p "$STAGE"
+  /usr/bin/tar -xzf "$PYCACHE/$PYRT_FILE" -C "$STAGE"
+  [ -x "$STAGE/python/bin/python3" ] || { echo "   ✘ 解包后没找到 python3" >&2; exit 1; }
+fi
+
+# 清掉上一次构建留下的（同样不要写一句 rm -rf "$PYDEST"，见上面打包后端的说明）
+if [ -d "$PYDEST" ]; then
+  find "$PYDEST" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
+fi
+mkdir -p "$PYDEST"
+# 只拷 bin/ 与 lib/ 两棵子树：
+#   include/ 是编译 C 扩展用的头文件、share/ 是 man 手册 —— 后端一个都用不到。
+/usr/bin/ditto "$STAGE/python/bin" "$PYDEST/bin"
+/usr/bin/ditto "$STAGE/python/lib" "$PYDEST/lib"
+# lib/ 里的 tkinter 全家桶（tcl8.6 / tk8.6 / itcl / libtcl / libtk）加上
+# idlelib、lib2to3 一共约 10MB，后端是无界面的纯标准库程序，全部不需要。
+for sub in tcl8 tcl8.6 tk8.6 itcl4.2.4; do
+  rm -rf "$PYDEST/lib/$sub" 2>/dev/null || true
+done
+for f in libtcl8.6.dylib libtk8.6.dylib; do
+  rm -f "$PYDEST/lib/$f" 2>/dev/null || true
+done
+PYLIB=$(/bin/ls "$PYDEST/lib" 2>/dev/null | /usr/bin/grep -m1 -E '^python3\.[0-9]+$')
+if [ -n "$PYLIB" ]; then
+  for sub in tkinter idlelib lib2to3; do
+    rm -rf "$PYDEST/lib/$PYLIB/$sub" 2>/dev/null || true
+  done
+  rm -f "$PYDEST/lib/$PYLIB"/lib-dynload/_tkinter*.so 2>/dev/null || true
+fi
+chmod +x "$PYDEST/bin/"* 2>/dev/null || true
+rm -rf "$PYDEST"/lib/python*/test 2>/dev/null || true
+
+# ★ 自检：包内这份 Python 必须真能跑起来、且标准库齐全 ★
+#   这一步不能省 —— 前面「改了半天、包里还是旧东西」的坑踩过不止一次。
+if "$PYDEST/bin/python3" -c "import json,http.server,urllib.request,subprocess,threading,ssl,sqlite3,zipfile,hashlib;print('ok')" >/dev/null 2>&1; then
+  echo "   ✔ 包内 Python $("$PYDEST/bin/python3" -V 2>&1) 可用，$(/usr/bin/du -sh "$PYDEST" | /usr/bin/cut -f1)"
+else
+  echo "   ✘ 包内 Python 跑不起来或标准库不全！" >&2
+  "$PYDEST/bin/python3" -V || true
+  exit 1
+fi
+
 if [ -d "$THEMES" ]; then
   /usr/bin/ditto "$THEMES" "$APP/Contents/Resources/Themes"
   chmod -R u+w "$APP/Contents/Resources/Themes"
@@ -158,9 +245,32 @@ fi
 echo "④ 签名…"
 BIN=$(basename "$(ls "$APP/Contents/MacOS")")
 ID=$(/usr/libexec/PlistBuddy -c "Print CFBundleIdentifier" "$APP/Contents/Info.plist")
+
+# ★ 先给包内 Python 的每个 Mach-O 文件单独签名 ★
+#   codesign 对整个 .app 签名时，只要发现包里有未签名的嵌套可执行代码就会直接
+#   失败（"code object is not signed at all"），整个构建在这里断掉。
+#   python-build-standalone 自带 ad-hoc 签名，但我们删过 tkinter、也做过 ditto，
+#   所以这里统一再签一遍，不依赖上游。
+if [ -d "$PYDEST" ]; then
+  signed=0
+  while IFS= read -r -d '' f; do
+    case "$(/usr/bin/file -b "$f")" in
+      *Mach-O*) if codesign --force --sign - "$f" >/dev/null 2>&1; then signed=$((signed+1)); fi ;;
+    esac
+  done < <(find "$PYDEST" -type f \( -name "*.so" -o -name "*.dylib" -o -perm -u+x \) -print0)
+  echo "   · 包内 Python 已单独签名 $signed 个文件"
+fi
+
 codesign --remove-signature "$APP/Contents/MacOS/$BIN" 2>/dev/null || true
 codesign --force --sign - --identifier "$ID" "$APP"
-codesign --verify --verbose=1 "$APP" >/dev/null 2>&1 && echo "   ✔ $(basename "$APP") 签名有效"
+if codesign --verify --verbose=1 "$APP" >/dev/null 2>&1; then
+  echo "   ✔ $(basename "$APP") 签名有效"
+else
+  # 签名失败要说出来。以前这里只在成功时打一行，失败时静默 ——
+  # 于是「构建成功但 App 打不开」这种最难查的问题会一路混到用户手上。
+  echo "   ✘ 签名校验没通过！App 可能无法启动" >&2
+  codesign --verify --verbose=2 "$APP" 2>&1 | head -5 >&2
+fi
 
 # 使用说明（每次重建都同步一份）
 cp -f "$SRC/使用说明.html" "$OUT/使用说明.html" 2>/dev/null || true

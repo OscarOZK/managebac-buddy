@@ -1,5 +1,5 @@
 #!/bin/bash
-# ManageBac 看板 · Mac 版 → DMG 安装包
+# ManageBac-Buddy · Mac 版 → DMG 安装包
 #
 # 为什么不用 create-dmg：本机没装（brew 也没有）。hdiutil + ditto 是系统自带的，
 # 完全够用 —— DMG 只是「一个可挂载的文件夹」，把 .app 和 /Applications 的软链
@@ -15,7 +15,7 @@
 set -e
 
 VERSION="${1:-3.0}"
-APPNAME="ManageBac-Dashboard"
+APPNAME="ManageBac-Buddy"
 SRC="${MBBOARD_SRC:-$HOME/Desktop/$APPNAME}"
 APP="$SRC/$APPNAME.app"
 OUTDIR="${MBBOARD_DMG_OUT:-$HOME/Desktop}"

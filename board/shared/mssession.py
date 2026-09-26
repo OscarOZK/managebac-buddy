@@ -44,6 +44,64 @@ HOME = os.path.expanduser("~")
 MBB = os.environ.get("MBBOARD_DATA") or os.path.join(HOME, ".mbboard")
 PROFILE = os.path.join(MBB, "teams-profile")
 
+# 浏览器查找共用 board/shared/browserfind.py（bridge.py / seiue.py 也用它）。
+# 自己把本目录塞进 sys.path：这个模块既能被 bridge.py 导入，也能被单独跑。
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+try:
+    import browserfind as _bfind
+except Exception:                                        # pragma: no cover
+    _bfind = None
+
+# 本机回环请求一律直连 —— 详见 board/shared/netlocal.py。
+# 装过 VPN / 代理客户端的机器上，HTTP_PROXY 会把 127.0.0.1 也丢给代理，
+# 于是「调试端口不通」「取不到令牌」这类假故障全冒出来。
+try:
+    import netlocal as _netlocal
+except Exception:                                        # pragma: no cover
+    _netlocal = None
+
+# 内置网页引擎（App 里的 WebKit）。在线时下面所有「找 Chromium / 起 Chrome /
+# 连调试端口」的代码都不再执行 —— 用户机器上一个浏览器都没装也能登 Teams。
+try:
+    import webengine as _we
+except Exception:                                        # pragma: no cover
+    _we = None
+
+
+def engine_on():
+    """内置引擎在不在线。每一次都问，因为它可能中途才起来
+    （用户是先开看板、再点「连接 Teams」的）。"""
+    try:
+        return bool(_we and _we.attached())
+    except Exception:
+        return False
+
+
+# ★ 窗口状态不在这里记账 ★
+#   引擎只有一个 App 窗口，希悦和 Teams 共用它。这份「窗口摆出来没有 /
+#   这段时间别动它」如果各模块自己存一份，Teams 的后台保活就会把用户正在
+#   登录希悦的窗口收走。所以统一放在共享层：webengine.mark_shown / hold_window，
+#   本模块只通过 _we.window_state() / _we.holding() 去读。
+
+_DIRECT = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
+def _netopen(req, timeout=10):
+    """打开一个请求。本机地址直连，外网地址照旧。"""
+    if _netlocal is not None:
+        return _netlocal.open_local(req.full_url, data=req.data,
+                                    headers=dict(req.header_items()),
+                                    method=req.get_method(), timeout=timeout)
+    try:
+        host = (urllib.parse.urlparse(req.full_url).hostname or "").lower()
+    except Exception:
+        host = ""
+    if host in ("127.0.0.1", "localhost", "::1") or host.startswith("127."):
+        return _DIRECT.open(req, timeout=timeout)
+    return urllib.request.urlopen(req, timeout=timeout)
+
 
 def _debug_port(scope, fallback):
     """把浏览器调试端口跟着**数据目录**派生出来。
@@ -183,13 +241,19 @@ class _WS(object):
 # ==========================================================================
 
 def _http_json(url, timeout=4):
+    # ★ 必须走 netlocal ★ 这里问的是自己的调试端口 127.0.0.1。
+    #   装过 VPN / 代理客户端的机器上 HTTP_PROXY 可能被设成本地某端口，
+    #   裸 urlopen 会把这条本机请求也交给代理，代理不认识 → 报错。
+    #   用户看到的却是「浏览器起来了但调试端口不通」，方向完全跑偏。
     req = urllib.request.Request(url, headers={"Host": "127.0.0.1:%d" % PORT})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
+    with _netopen(req, timeout=timeout) as r:
         return json.loads(r.read().decode("utf-8", "replace"))
 
 
 def cdp_up():
-    """调试端口是否活着。"""
+    """浏览器在不在跑。内置引擎在线时它就是在跑 —— 而且没有一个外部进程。"""
+    if engine_on():
+        return True
     try:
         _http_json("http://127.0.0.1:%d/json/version" % PORT)
         return True
@@ -198,6 +262,21 @@ def cdp_up():
 
 
 def pages():
+    """当前的页面列表。
+
+    ★ 内置引擎这条路返回**同一种形状**的字典 ★（id / url / title）
+      下面那些「找 Teams 页」「挑出卡死的续页」「合并重复标签」的逻辑
+      一个字都不用改就能跑 —— 这正是当初把 id 命名成 CDP 那套的原因。
+    """
+    if engine_on():
+        out = []
+        for t in (_we.tabs() or []):
+            if not isinstance(t, dict):
+                continue
+            out.append({"id": t.get("id") or "",
+                        "url": t.get("url") or "",
+                        "title": t.get("title") or ""})
+        return out
     try:
         return [t for t in _http_json("http://127.0.0.1:%d/json/list" % PORT)
                 if t.get("type") == "page"]
@@ -220,7 +299,16 @@ def _browser_cmd(method, params=None, timeout=8):
     用来搬窗口位置：Browser.getWindowForTarget / Browser.setWindowBounds /
     Target.activateTarget 都在浏览器域里。走 CDP 而不是 AppleScript，
     是因为 CDP 不需要「自动化控制」系统授权，不会弹权限框。
+
+    ★ 内置引擎在线时这里一律返回 None ★
+      引擎没有「浏览器级 CDP 域」这个概念 —— 窗口归 App 自己所有，
+      搬窗口/置前/收起全部改走 _unpark_window / _park_window / _close_page
+      里的引擎分支（它们已经提前分流，走不到这里）。留一个 None 是为了
+      万一还有别的调用点漏进来时，行为是「安静地什么也没做」，
+      而不是抛异常把整条链路带崩。
     """
+    if engine_on():
+        return None
     try:
         ver = _http_json("http://127.0.0.1:%d/json/version" % PORT)
         wsurl = ver.get("webSocketDebuggerUrl")
@@ -256,6 +344,8 @@ def _window_of(page):
 
 
 def _move_window(left, top, width=1200, height=860):
+    if engine_on():
+        return _we.geometry(x=int(left), y=int(top), w=int(width), h=int(height))
     page = teams_page()
     if not page:
         return False
@@ -276,11 +366,28 @@ _HOLD = {"until": 0.0}
 
 
 def hold_window(seconds=1800):
-    """声明「接下来这段时间别动这个窗口」。"""
+    """声明「接下来这段时间别动这个窗口」。
+
+    ★ 内置引擎这条路要把窗口期写进共享层 ★
+      引擎只有一个 App 窗口，希悦和 Teams 共用它。这份「别动我」的声明
+      如果只存在本模块，希悦那边的保活读不到，照样会把窗口收走 ——
+      详见 board/shared/webengine.py 里「窗口状态」那一段。
+    """
+    if engine_on():
+        try:
+            _we.hold_window(seconds)
+        except Exception:
+            pass
     _HOLD["until"] = time.time() + seconds
 
 
 def holding():
+    if engine_on():
+        try:
+            if _we.holding():
+                return True
+        except Exception:
+            pass
     return time.time() < _HOLD["until"]
 
 
@@ -315,6 +422,13 @@ def _unpark_window(width=1180, height=860, page=None):
     page 必须由调用方给：这个函数有两个使用者（Teams 与希悦），
     各自有各自的页面，写死成 teams_page() 会让希悦那边摆错窗口。
     """
+    if engine_on():
+        # 引擎的窗口归 App 自己所有，没有「最小化状态下坐标被忽略」这回事，
+        # 一次 show 就够：摆到屏幕正中、置前、并把标签切到指定的那一页。
+        tid = (page or teams_page() or {}).get("id") or None
+        ok = _we.show(tab=tid, title="登录")
+        hold_window(1800)          # 半小时内保活不许再收它
+        return bool(ok)
     page = page or teams_page()
     if not page:
         return False
@@ -353,7 +467,18 @@ def _park_window():
     不占桌面，只在 Dock 里缩成一个小窗。流程：先确保 normal（最小化
     状态下不能改 bounds），挪到远处，再最小化。三步里最后一步才是
     关键，前两步只是兜底（万一某些系统版本不支持直接最小化）。
+
+    内置引擎这条路简单得多：AppKit 没有「坐标被夹回屏内」那套规矩，
+    直接把 alpha 调到 0、鼠标事件穿透、挪到屏幕右下角就行 ——
+    ★ 但**不能 orderOut** ★。orderOut 会让 WebKit 认为窗口不可见，
+    把页面定时器降频到 1 秒，Teams 这种 SPA 会表现成「整个卡死」，
+    保活到期后重开也救不回来（详见 WebEngine.swift 里 hide() 的注释）。
     """
+    if engine_on():
+        if holding():
+            # 用户正在窗口上登录，任何「藏窗口」的调用都直接放弃
+            return False
+        return bool(_we.hide())
     page = teams_page()
     if not page:
         return False
@@ -383,6 +508,8 @@ def _park_window():
 
 def _window_state():
     """当前 Teams 页所在窗口的状态（normal/minimized/...；拿不到返回 None）。"""
+    if engine_on():
+        return _we.window_state()
     page = teams_page()
     if not page:
         return None
@@ -392,6 +519,19 @@ def _window_state():
 
 def _eval(page, expression, timeout=20, await_promise=True):
     """在指定页面里执行 JS，返回其中的值（字符串）。"""
+    if engine_on():
+        # ★ 用 _we.call 而不是 _we.eval_text ★
+        #   eval_text 拿不到东西时回空串，调用方分不出「页面真的返回了空」
+        #   和「引擎没执行」。harvest() 依赖「抛异常」来区分这两种情况，
+        #   所以这里把失败原样抛出去，并在文案里带上引擎给的原因。
+        tid = (page or {}).get("id") or ""
+        args = {"js": expression}
+        if tid:
+            args["id"] = tid
+        r = _we.call("eval", timeout=max(5.0, float(timeout)), **args)
+        if not r.get("ok"):
+            raise IOError(str(r.get("error") or "内置引擎执行脚本失败")[:200])
+        return r.get("value")
     u = urllib.parse.urlparse(page["webSocketDebuggerUrl"])
     ws = _WS(u.hostname, u.port or PORT, u.path, timeout=timeout)
     try:
@@ -417,11 +557,13 @@ def _eval(page, expression, timeout=20, await_promise=True):
 
 def _open_url_in_browser(url):
     """让已在运行的浏览器新开一个标签页到指定地址。"""
+    if engine_on():
+        return _we.open_url(url, new=True) is not None
     target = "http://127.0.0.1:%d/json/new?%s" % (PORT, urllib.parse.quote(url, safe=""))
     for method in ("PUT", "GET"):          # 新版 Chrome 只认 PUT
         try:
             req = urllib.request.Request(target, method=method)
-            with urllib.request.urlopen(req, timeout=6) as r:
+            with _netopen(req, timeout=6) as r:
                 r.read()
             return True
         except Exception:
@@ -434,16 +576,68 @@ def _open_url_in_browser(url):
 # ==========================================================================
 
 def chrome_path():
-    for p in (_MAC_CHROME, _WIN_CHROME):
+    """任意一个 Chromium 内核的浏览器都行 —— 详见 board/shared/browserfind.py。
+
+    以前这里**只查 <数据目录>/chrome/Google Chrome for Testing.app 一条路**，
+    而 bridge.py 里另有一份宽查找（会看系统里已装的 Chrome / Edge / Brave）。
+    两边不一致制造出的现场极难解释：
+
+        「检查组件」说浏览器就绪（宽查找找到了系统里的 Edge），
+        点「连接 Teams」却说「找不到 Chrome for Testing」（窄查找没找到）。
+
+    而且门槛本身就是多余的：CDP 只要一个 Chromium 内核的可执行文件，
+    Chrome / Edge / Brave / Arc 都能用 —— 用户装过任意一款就够。
+
+    ★ 内置引擎在线时这里返回一个占位串 ★
+      上层很多地方是这么写的：「先查有没有浏览器，没有就去准备一份」。
+      引擎在线时这些准备工作全是多余的（引擎就在 App 身体里，一个字节
+      都不用下），但那些代码仍然会拿 chrome_path() 的真假做判断。
+      返回占位串让它们统一走「已经就绪」这一支，是最省事也最少回归的做法。
+    """
+    if engine_on():
+        return "app://webengine"
+    if _bfind is not None:
+        return _bfind.find() or None
+    for p in (_MAC_CHROME, _WIN_CHROME):        # 兜底：模块没加载起来时的老逻辑
         if os.path.exists(p):
             return p
     return None
 
 
 def chrome_app():
-    """Chrome for Testing 的 .app 路径（`open -g` 要的是 App，不是二进制）"""
+    """找到的那个浏览器的 .app 路径（`open -g` 要的是 App，不是二进制）。
+
+    ★ 不能回退到写死的「Chrome for Testing.app」★ 用户机器上那个目录多半
+    根本不存在，`open` 会直接失败，窗口就再也摆不到屏幕前面来。
+    """
+    if engine_on():
+        return "app://webengine"        # 同上：让上层判断统一走「已就绪」
+    if _bfind is not None:
+        return _bfind.app_bundle() or None
     p = os.path.join(MBB, "chrome", "Google Chrome for Testing.app")
     return p if os.path.exists(p) else None
+
+
+def _prepare_browser():
+    """还没找到浏览器就先在后台准备一份。返回 (就绪?, 一句话)。
+
+    ★ 这函数原来叫 ensure_browser，和下面那个「确保浏览器在跑并停在 Teams 页」
+      的 ensure_browser 重名 ★ —— Python 后定义的那个会把先定义的整个盖掉。
+      于是 launch_browser 里那句 `ready, hint = ensure_browser()` 实际调到的是
+      返回布尔值的那个版本，解包直接 TypeError。
+
+    后果非常专门：**只有「这台机器上一个 Chromium 都找不到」时才会触发** ——
+    也就是别人（和作者本人）的机器。而开发机上下载过 Chrome for Testing，
+    chrome_path() 一路非空，永远绕开了这一行。所以它一直没被发现。
+    表现就是「点连接 Teams 什么也没发生 / 报一串看不懂的错」，恰好是
+    分发给朋友之后遇到的那一类。改名之后这条路才真正走得通。
+    """
+    if chrome_path():
+        return True, ""
+    if _bfind is not None:
+        _bfind.prepare_async()
+        return False, (_bfind.state().get("fix") or "正在自动准备浏览器…")
+    return False, "没找到可用的浏览器"
 
 
 def _clear_stale_locks():
@@ -485,9 +679,26 @@ def launch_browser(url=TEAMS_URL, quiet=False):
     （不抢焦点）。保活是用户看不见的后台动作，要是把窗口怼到屏幕中间，
     用户正在看板前面坐着，就会觉得「打开看板怎么又弹出 Teams 网页了」。
     """
+    if engine_on():
+        # 内置引擎这条路：不下载、不启动外部进程、不用配置文件目录，
+        # 只是在 App 自己那个窗口里打开一个标签页。
+        if not _we.open_url(url, new=True):
+            _LAST_ERR["msg"] = (_we.NOT_ONLINE if not _we.attached()
+                                else "内置浏览器打不开这个网址")
+            return False
+        time.sleep(0.6)                 # 让 WKWebView 把导航发出去
+        if quiet:
+            _park_window()
+        else:
+            _unpark_window()
+        return True
     exe = chrome_path()
     if not exe:
-        _LAST_ERR["msg"] = "找不到 Chrome for Testing"
+        # 顺手在后台准备一份，并把「正在准备」而不是「找不到」告诉用户 ——
+        # 「找不到 Chrome for Testing」这句话对用户零信息量（他既没装过、
+        # 也不知道该装什么），而且它曾经让整个 Teams 板块看起来彻底坏了。
+        ready, hint = _prepare_browser()
+        _LAST_ERR["msg"] = hint or "本机还没有可用的浏览器"
         return False
     try:
         os.makedirs(PROFILE, exist_ok=True)
@@ -649,6 +860,8 @@ def _is_dead_login(url):
 
 def _close_page(tid):
     """关掉一个标签页。走 CDP；HTTP /json/close 在新版 Chrome 上会假装成功。"""
+    if engine_on():
+        return bool(_we.close(tab=tid))
     r = _browser_cmd("Target.closeTarget", {"targetId": tid})
     if r and r.get("success"):
         return True
@@ -656,7 +869,7 @@ def _close_page(tid):
         try:
             req = urllib.request.Request(
                 "http://127.0.0.1:%d/json/close/%s" % (PORT, tid), method=method)
-            urllib.request.urlopen(req, timeout=4).read()
+            _netopen(req, timeout=4).read()
             return True
         except Exception:
             continue
@@ -812,10 +1025,23 @@ _HARVEST_JS = r"""
     }
   }
 
+  // ★ 过期的令牌不算数 ★
+  //   localStorage 里会长年躺着几张早就作废的令牌。以前是「按 exp 排序取最大的
+  //   那张」—— 如果所有令牌都已过期，那个「最大」仍然是过期的，于是后续每一次
+  //   Graph 请求都必然 401：界面显示「Teams 连不上」，而用户明明刚刚在浏览器里
+  //   登进去过（实测就撞上了：取到的令牌 exp 是前一天，早已过期）。
+  //   现在先把**还有效**的挑出来；一张有效的都没有时，如实告诉调用方
+  //   「浏览器里的登录态已经过期」，让它去引导用户重新登一次 ——
+  //   这比甩一个 401 有用得多。
+  const now = Math.floor(Date.now() / 1000);
+  const valid = hits.filter(h => !h.exp || h.exp > now);
+  valid.sort((a, b) => b.exp - a.exp);
   hits.sort((a, b) => b.exp - a.exp);
-  const best = hits[0];
-  return JSON.stringify(best ? { ok: true, upn, tok: best.tok, exp: best.exp, scp: best.scp }
-                             : { ok: false, upn });
+  const best = valid[0] || hits[0];
+  return JSON.stringify(best
+    ? { ok: !!valid[0], upn, tok: best.tok, exp: best.exp, scp: best.scp,
+        expired: !valid[0], cands: hits.length }
+    : { ok: false, upn });
 })()
 """
 
@@ -844,7 +1070,13 @@ def harvest(timeout=30):
     except Exception:
         d = {}
     if not d.get("ok"):
-        _LAST_ERR["msg"] = "页面里没有 Graph 令牌（可能还没登录）"
+        if d.get("expired"):
+            # 页面里有令牌，但全都过期了 —— 这不是「没登录」，而是「登录态过期」。
+            # 两种情况的下一步动作完全不同（后者要重新登一次），必须分开说。
+            _LAST_ERR["msg"] = ("Teams 的登录态已经过期了 —— "
+                                "点一次「打开浏览器登录」，在窗口里重新登一下")
+        else:
+            _LAST_ERR["msg"] = "页面里没有 Graph 令牌（可能还没登录）"
         return None
     with _lock:
         _CACHE.update({"token": d["tok"], "exp": int(d.get("exp") or 0),
@@ -856,6 +1088,9 @@ def harvest(timeout=30):
 
 
 def _reload_page():
+    if engine_on():
+        _we.reload(tab=(teams_page() or {}).get("id"))
+        return
     page = teams_page()
     if not page:
         return
@@ -1132,6 +1367,9 @@ def auth_state():
         "browserUp": cdp_up(),
         "browserPort": PORT,
         "browserUrl": TEAMS_URL,
+        # 内置引擎在不在。界面据此把「浏览器」那一栏写成「App 内置浏览器」，
+        # 用户就不会再去找一个自己从来没装过的 Chrome。
+        "engine": engine_on(),
     }
 
 

@@ -61,6 +61,24 @@ struct RenderCheck {
         /// --burst：live 模式下把每次采样的帧都存下来（<out> 变成名干，
         /// 落成 -00.png / -01.png …），用来看「某个东西是怎么一帧帧动的」
         var burst = false
+        /// --bench [帧数]：hello 绘制的性能基准。
+        ///
+        /// 逐帧量「一帧要画多久」，用来证明"一丁点卡顿都没有"不是感觉而是
+        /// 有据可查：只要 p99 远低于 16.7ms（60Hz 帧预算），就不会掉帧。
+        /// 相位在 [0,1) 上均匀铺开，覆盖墨点 / 书写 / 擦写三个阶段的
+        /// 各种笔画长度（最长的一段成本最高，必须落在统计里）。
+        var benchFrames = 0
+        /// --hitch [秒]：真窗口跑 hello，量**实际**帧间隔与每帧绘制耗时。
+        ///
+        /// 和 --bench 的分工：--bench 是离屏渲染（ImageRenderer），只能证明
+        /// "这一笔画得起"；--hitch 走真窗口 + 真 runloop + 真合成器，能证明
+        /// "帧真的按 60/120Hz 送出去了"。用户报「h 那里卡」而 --bench 说 p99
+        /// 只有 0.58ms，就必须用这条来查。
+        var hitchSecs = 0.0
+        /// --hitch 的预热秒数（第二个参数）。默认 1.2s —— 首启那几帧的字体/
+        /// 着色器惰性初始化每次启动只发生一次，不该混进稳态统计。
+        /// 但用户看到的第一幕恰恰就是冷启动那几帧，所以要能把它单独量出来。
+        var hitchWarm = 1.2
         /// --data <目录>：把**整个数据目录**指到别处。
         ///
         /// ★ 为什么需要它（只靠 --cache 不够）★
@@ -118,6 +136,10 @@ struct RenderCheck {
                     PreviewFlags.dragTo = CGSize(width: a, height: b)
                 }
             case "--burst":   burst = true
+            case "--bench":   benchFrames = Int(nextVal()) ?? 180
+            case "--hitch":
+                hitchSecs = Double(nextVal()) ?? 8
+                hitchWarm = Double(nextVal()) ?? 1.2
             case "--preview": PreviewFlags.previewIndex = Int(nextVal()) ?? 0
             case "--detail":  PreviewFlags.detailIndex = Int(nextVal()) ?? 0
             case "--live":    liveSecs = Double(nextVal()) ?? 6
@@ -133,6 +155,54 @@ struct RenderCheck {
         if let d = dataDir {
             MBBPaths.overrideDataDir = d
             print("data dir → \(d)")
+        }
+
+        // ── hello 绘制基准：逐帧量耗时 ──────────────────────────────────
+        // 判据：p99 必须远低于 16.7ms（60Hz 帧预算）。超了就一定会掉帧，
+        // 观感就是"卡一下"。这个数字比任何主观描述都可信。
+        if benchFrames > 0 {
+            let h = height ?? 900
+            let scheme: ColorScheme = dark ? .dark : .light
+            var ms: [Double] = []
+            ms.reserveCapacity(benchFrames)
+            // 先热身几帧，避开首次的字体/着色器惰性初始化
+            for _ in 0..<8 {
+                PreviewFlags.helloT = 0.3
+                let v = HelloGreeting(onStart: {})
+                    .environmentObject(BoardSettings.shared)
+                    .environment(\.colorScheme, scheme)
+                    .frame(width: width, height: h)
+                let r = ImageRenderer(content: v)
+                r.scale = 2
+                r.proposedSize = ProposedViewSize(width: width, height: h)
+                _ = r.nsImage
+            }
+            for i in 0..<benchFrames {
+                PreviewFlags.helloT = Double(i) / Double(benchFrames)
+                let v = HelloGreeting(onStart: {})
+                    .environmentObject(BoardSettings.shared)
+                    .environment(\.colorScheme, scheme)
+                    .frame(width: width, height: h)
+                let r = ImageRenderer(content: v)
+                r.scale = 2
+                r.proposedSize = ProposedViewSize(width: width, height: h)
+                let t0 = CFAbsoluteTimeGetCurrent()
+                _ = r.nsImage
+                ms.append((CFAbsoluteTimeGetCurrent() - t0) * 1000)
+            }
+            let sorted = ms.sorted()
+            func pct(_ p: Double) -> Double {
+                sorted[min(sorted.count - 1, Int(Double(sorted.count - 1) * p))]
+            }
+            let mean = ms.reduce(0, +) / Double(ms.count)
+            print(String(format: "bench  %d 帧  %dx%d@2x", benchFrames, Int(width), Int(h)))
+            print(String(format: "  平均 %.2f ms   中位 %.2f ms", mean, pct(0.5)))
+            print(String(format: "  p90 %.2f ms   p99 %.2f ms   最慢 %.2f ms",
+                         pct(0.90), pct(0.99), sorted.last ?? 0))
+            let budget = 1000.0 / 60.0
+            print(String(format: "  60Hz 预算 %.1f ms → 余量 %.1f 倍",
+                         budget, budget / max(pct(0.99), 0.001)))
+            return
         }
 
         // 缓存的落点。--cache 单独指定时用它，否则跟着数据目录走 ——
@@ -189,6 +259,97 @@ struct RenderCheck {
         let s = BoardSettings.shared
         // 自检只改内存：跑一次渲染不该把用户的设置文件写花
         BoardSettings.readOnly = true
+
+        // ── --hitch：真窗口里量「帧间隔」与「每帧绘制耗时」 ─────────────
+        //
+        // 这是唯一能解释「--bench 说 p99 0.58ms，用户却肉眼觉得 h 卡」的探针。
+        // 做法：把 HelloGreeting 挂进一个真窗口（屏幕外、alpha=0，用户看不见，
+        // 但它在台上，SwiftUI 会真的按显示链路出帧），跑几秒后分析两份数据：
+        //   · arrivals —— TimelineView 交给 Canvas 的时间戳序列，相邻差 = 帧间隔
+        //   · draws    —— Canvas 闭包内实测的绘制毫秒数
+        // 判据：帧间隔应当稳定在 1000/刷新率（60→16.7ms / 120→8.3ms）附近；
+        //       出现明显长尾就说明掉帧。再把掉帧那一帧的相位打出来，
+        //       就能知道"卡"落在书写的哪一段。
+        if hitchSecs > 0 {
+            PreviewFlags.hitchProbe = true
+            let app = NSApplication.shared
+            app.setActivationPolicy(.accessory)
+            let h: CGFloat = height ?? 900
+            let host = NSHostingView(rootView: AnyView(
+                HelloGreeting(onStart: { })
+                    .environmentObject(s)
+                    .environment(\.colorScheme, dark ? .dark : .light)
+                    .frame(width: width, height: h)))
+            host.frame = NSRect(x: 0, y: 0, width: width, height: h)
+            let win = NSWindow(contentRect: host.frame, styleMask: [.borderless],
+                               backing: .buffered, defer: false)
+            win.contentView = host
+            // ★ 不能设 alphaValue = 0 ★
+            // macOS 会把完全透明的窗口整条合成路径短路掉，TimelineView 于是
+            // 收不到 vsync 回调 —— 那样量出来的"没有卡顿"是假的。
+            // 放到屏幕外就够了（和 --live 一样），让它保持可见。
+            win.setFrameOrigin(NSPoint(x: -6000, y: -6000))
+            win.orderFrontRegardless()
+
+            // 先跑一段让首帧的字体/着色器惰性初始化过去，再开始采样 ——
+            // 否则记到的是"冷启动那一帧"，那是另一回事。
+            // 想看冷启动本身就把第二个参数写成 0。
+            RunLoop.main.run(until: Date().addingTimeInterval(hitchWarm))
+            _ = HitchProbe.shared.drain()
+            RunLoop.main.run(until: Date().addingTimeInterval(hitchSecs))
+            let (arr, draws, phases) = HitchProbe.shared.drain()
+
+            guard arr.count > 4 else {
+                print("hitch: 采样太少（\(arr.count) 帧），窗口可能没真的出帧"); exit(2)
+            }
+            var gaps: [Double] = []
+            for i in 1..<arr.count { gaps.append((arr[i] - arr[i-1]) * 1000) }
+            let sg = gaps.sorted(), sd = draws.sorted()
+            func q(_ a: [Double], _ p: Double) -> Double {
+                a.isEmpty ? 0 : a[min(a.count-1, Int(Double(a.count-1)*p))]
+            }
+            let med = q(sg, 0.5)
+            print(String(format: "hitch  %.1fs  %d 帧  实测中位帧间隔 %.2f ms（≈ %.0f Hz）",
+                         hitchSecs, arr.count, med, med > 0 ? 1000/med : 0))
+            print(String(format: "  （预热 %.1fs；预热 0 = 含冷启动）", hitchWarm))
+            print(String(format: "  帧间隔  p50 %.2f  p90 %.2f  p99 %.2f  最慢 %.2f ms",
+                         q(sg,0.50), q(sg,0.90), q(sg,0.99), sg.last ?? 0))
+            print(String(format: "  绘制耗时 p50 %.3f  p90 %.3f  p99 %.3f  最慢 %.3f ms",
+                         q(sd,0.50), q(sd,0.90), q(sd,0.99), sd.last ?? 0))
+
+            // 掉帧帧：间隔 > 1.6× 中位。把它们对应的相位列出来。
+            var bad: [(Double, Double, Int)] = []
+            for i in 0..<gaps.count where gaps[i] > med * 1.6 {
+                let ph = i + 1 < phases.count ? phases[i + 1] : -1
+                bad.append((gaps[i], ph, i))
+            }
+            print("  掉帧帧 \(bad.count) / \(gaps.count)（间隔 > 1.6× 中位）")
+            if !bad.isEmpty {
+                print("    最慢 8 帧：")
+                for e in bad.sorted(by: { $0.0 > $1.0 }).prefix(8) {
+                    let cyc = CycInfo.total
+                    let secInLoop = e.1 >= 0 ? e.1 * cyc : -1
+                    print(String(format: "      间隔 %6.2f ms   循环相位 %.3f（%.2f s，%@）",
+                                 e.0, e.1, secInLoop, CycInfo.stage(e.1)))
+                }
+            }
+            // 相位分布直方图：看掉帧集中在哪一段
+            if !bad.isEmpty {
+                var bins = [Int](repeating: 0, count: 12)
+                for e in bad where e.1 >= 0 {
+                    bins[min(11, max(0, Int(e.1 * 12)))] += 1
+                }
+                let names = ["墨点", "起笔", "h", "h→e", "e", "e→l", "l", "l→l", "l", "l→o", "o", "擦除"]
+                print("    掉帧相位分布（每格 \(String(format: "%.2f", CycInfo.total/12))s）：")
+                for (i, n) in bins.enumerated() where n > 0 {
+                    print(String(format: "      %@ %2d 次", names[i], n))
+                }
+            }
+            let verdict = q(sg, 0.99) < med * 1.6
+            print(verdict ? "  ✔ 帧间隔稳定，没有掉帧" : "  ✘ 存在掉帧，卡顿是真的")
+            return
+        }
+
         s.theme = ThemeMode(rawValue: theme) ?? .system
         // 主题（调色板）：离屏渲染时也要真的换过去，否则看到的还是出厂配色
         if s.paletteID != palette { s.paletteID = palette }
@@ -428,7 +589,7 @@ struct RenderCheck {
                     .frame(width: width, height: height ?? 838, alignment: .center)
             )
         } else if section == "hello" {
-            // 空心霓虹 hello：配 --hello <0…1> 冻在循环相位（0.08=墨点 0.4=书写中 0.55=写满 0.87=擦除中）
+            // 空心霓虹 hello：配 --hello <0…1> 冻在循环相位（0.02=落笔·墨珠 0.4=书写中 0.55=写满 0.87=擦除中）
             view = AnyView(
                 HelloGreeting(onStart: { })
                     .environmentObject(s)

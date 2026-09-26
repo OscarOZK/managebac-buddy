@@ -181,7 +181,7 @@ struct OnboardingView: View {
                 }
                 .shadow(color: settings.accent.color(scheme).opacity(0.30), radius: 9, y: 3)
 
-                Text("ManageBac 看板")
+                Text("ManageBac-Buddy")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(Theme.ink(scheme))
                 Text("首次配置向导")
@@ -483,9 +483,15 @@ struct OnboardingView: View {
                 .font(.system(size: 13))
                 .foregroundStyle(Theme.ink2(scheme))
 
-            // 同样不放示例值：预填任何具体账号都会让人以为已经填过了
-            fieldBlock(title: "账号", hint: "通常是学号或邮箱前缀", text: $login,
-                       placeholder: "例如 2024xxxxxx 或 name.surname")
+            // 同样不放示例值：预填任何具体账号都会让人以为已经填过了。
+            //
+            // ★ 提示词从「学号或邮箱前缀」改成了「完整邮箱」★
+            //   ManageBac 的登录框收的是学校邮箱全称（带 @），只填前缀会被判成
+            //   密码错误 —— 而界面上原来写着「通常是学号或邮箱前缀」，
+            //   等于在教用户填一个登不进去的值。
+            fieldBlock(title: "账号", hint: "学校发的邮箱全称，要带 @ 后面的部分",
+                       text: $login,
+                       placeholder: "例如 name@beijing101id.com")
             secureBlock(title: "密码", hint: "", text: $password, placeholder: "••••••••")
 
             HStack(spacing: 10) {
@@ -571,8 +577,8 @@ struct OnboardingView: View {
 
             callout(icon: "macwindow",
                     title: "没看到窗口？",
-                    body: "它可能被别的窗口压在下面了 —— 用 ⌘Tab 或点一下 Dock 里的 "
-                       + "「Google Chrome for Testing」。再点一次「打开浏览器登录」，"
+                    body: "它可能被别的窗口压在下面了 —— 用 ⌘Tab 切一下，"
+                       + "或者把其他窗口挪开。再点一次「打开浏览器登录」，"
                        + "窗口会被重新摆到屏幕中央。")
         }
     }
@@ -1012,16 +1018,23 @@ struct OnboardingView: View {
 
     private func doLogin() async {
         mbBusy = true; mbOK = false; mbMsg = "正在连接本机服务…"
-        Bridge.launchIfNeeded()
-        for _ in 0..<20 {
-            if await DataStore.shared.healthy() { break }
-            try? await Task.sleep(nanoseconds: 400_000_000)
+        // ★ 等到服务真的能用，或者拿到「为什么起不来」★
+        //   以前这里是「无脑等 8 秒」就往下发请求：后端要是起不来，8 秒后必然
+        //   连不上，而那一步失败又被显示成「登录失败，检查账号密码后重试」——
+        //   用户于是去改密码。现在起不来就当场说清原因。
+        if let why = await Bridge.waitReady() {
+            mbBusy = false
+            mbMsg = why
+            return
         }
         mbMsg = "正在登录…"
+        // 90 秒曾经小于服务端最坏耗时（开浏览器 120s + 填表 + 轮询 30s），
+        // 于是「服务端其实在正常干活」被客户端先判超时，同样显示成「账号密码错」。
+        // 现在给足余量；服务端自己也会在浏览器还没准备好时提前回话。
         let r = await Bridge.post("/api/login", [
             "login": login.trimmed, "password": password,
             "remember": true, "save": saveCreds,
-        ], timeout: 90)
+        ], timeout: 180)
         mbBusy = false
         mbOK = Bridge.ok(r)
         mbMsg = mbOK
@@ -1035,13 +1048,16 @@ struct OnboardingView: View {
     }
 
     private func checkStatus() async {
-        Bridge.launchIfNeeded()
+        if let why = await Bridge.waitReady() {
+            mbMsg = why
+            return
+        }
         // 引导页是用户**主动**点「检查」——现场探一次。
         // 服务端会先把 15 秒内的快照塞给我们，冷启动没探完就带 probing，
         // 由 manageBacStatus 自动再问两轮，而不是在这里吃 20 秒超时、
         // 误报「本机服务还没起来」（服务其实好得很）。
         guard let d = await Bridge.manageBacStatus(probe: true) else {
-            mbMsg = "本机服务还没起来，稍等几秒再点一次"
+            mbMsg = Bridge.text(nil, "本机服务还没起来，稍等几秒再点一次")
             return
         }
         let logged = (d["loggedIn"] as? Bool) ?? false
@@ -1050,15 +1066,21 @@ struct OnboardingView: View {
             mbMsg = "已登录：\((d["user"] as? String) ?? "（已登录）")"
         } else {
             // 服务端写的说明比一句「当前未登录」有用得多
-            //（比如「正在后台下载 Chrome，几分钟后点重新校验」）。
+            //（比如「正在后台准备浏览器，几分钟后点重新校验」）。
             mbMsg = Bridge.text(d, "当前未登录")
         }
     }
 
     private func startTeams() async {
         teamsBusy = true; teamsMsg = "正在打开浏览器…"
-        Bridge.launchIfNeeded()
-        let r = await Bridge.post("/api/teams/login", [:], timeout: 40)
+        if let why = await Bridge.waitReady() {
+            teamsBusy = false
+            teamsMsg = why
+            return
+        }
+        // 60 秒（原来 40）：服务端这一步现在还会先确认「本机有没有浏览器」，
+        // 没有的话立刻回一句人话，正常路径仍是毫秒级。
+        let r = await Bridge.post("/api/teams/login", [:], timeout: 60)
         teamsMsg = Bridge.ok(r) ? "浏览器已打开，请在窗口里完成登录" : Bridge.msg(r, "打开失败，稍后重试")
     }
 
@@ -1090,8 +1112,13 @@ struct OnboardingView: View {
     }
 
     private func startSeiue() async {
-        seiueBusy = true; seiueMsg = "正在读取课表…"; seiueTried = true
-        Bridge.launchIfNeeded()
+        seiueBusy = true; seiueMsg = "正在连接本机服务…"; seiueTried = true
+        if let why = await Bridge.waitReady() {
+            seiueBusy = false
+            seiueMsg = why
+            return
+        }
+        seiueMsg = "正在读取课表…"
         // 后端会先替用户在网页上点一遍「导出」（拿整张表，一节不漏），
         // 不成再退回从页面上抠格子。所以这里只等结果，不预设「需要登录」。
         let r = await Bridge.post("/api/seiue/sync", [:], timeout: 130)
@@ -1118,9 +1145,12 @@ struct OnboardingView: View {
     /// 「登录希悦」：把希悦窗口摆到屏幕正中（窗口本来可能停在屏幕外），
     /// 并顺手把它的下载目录指到看板认得的地方。
     private func openSeiue() async {
-        Bridge.launchIfNeeded()
+        if let why = await Bridge.waitReady() {
+            seiueMsg = why
+            return
+        }
         seiueMsg = "正在打开课表页…"
-        let r = await Bridge.post("/api/seiue/login", [:], timeout: 40)
+        let r = await Bridge.post("/api/seiue/login", [:], timeout: 60)
         if Bridge.ok(r) {
             seiueMsg = "课表页已打开。没登录就在窗口里登一次，然后点「读取课表」"
         } else {
@@ -1133,7 +1163,11 @@ struct OnboardingView: View {
     /// 这是用户点名要的那条路 —— 不要让人手动拖文件进来。
     private func importSeiue() async {
         seiueBusy = true; seiueMsg = "正在找网页导出的课表…"
-        Bridge.launchIfNeeded()
+        if let why = await Bridge.waitReady() {
+            seiueBusy = false
+            seiueMsg = why
+            return
+        }
         let r = await Bridge.post("/api/seiue/import", [:], timeout: 60)
         seiueBusy = false
         seiueOK = Bridge.ok(r)

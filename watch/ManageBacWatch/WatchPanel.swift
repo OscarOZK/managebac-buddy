@@ -304,7 +304,7 @@ struct WatchRootView: View {
                        tint: Color(.sRGB, red: 0.0, green: 0.44, blue: 1.0, opacity: 0.24),
                        interactive: true)
 
-            Text("数据来自电脑上的 ManageBac 看板桥接服务 · 每 5 分钟自动更新")
+            Text("数据来自电脑上的 ManageBac-Buddy桥接服务 · 每 5 分钟自动更新")
                 .font(.system(size: WatchMetrics.fs(9)))
                 .foregroundStyle(.tertiary)
                 .lineLimit(2)

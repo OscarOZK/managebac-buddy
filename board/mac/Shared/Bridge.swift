@@ -11,6 +11,71 @@ enum Bridge {
     /// 直接写死，避免在非主 actor 上下文里引用 DataStore 的静态属性
     static let base = URL(string: "http://127.0.0.1:8765")!
 
+    /* ------------------------------------------------------------------
+       请求失败的「人话翻译」
+       ------------------------------------------------------------------
+       以前这里是 `try? await session.data(for:)` —— 一切失败都被吞成一个 nil。
+       调用方拿不到 nil 的原因，只能一律按最坏假设解释，于是出现两类误报：
+
+         · 后端根本没起来（连不上 8765）→ 界面说「登录失败，检查账号密码后重试」
+           ——用户被引去反复改密码，而问题跟他账号一点关系都没有；
+         · 后端忙不过来超时 → 界面说「看板没应答」，用户不知道是自己网络问题
+           还是 App 坏了。
+
+       现在每次请求都把「为什么失败」记在 lastFail 里（成功则清空），
+       msg/text 在没有服务端说明时自动改用这句话。记住它必须在**每一次**
+       请求里被赋值 —— 包括成功的那次，否则上一次的失败原因会一直粘着。
+       ------------------------------------------------------------------ */
+    private static let failLock = NSLock()
+    private static var _lastFail = ""
+
+    /// 最近一次请求为什么失败（空字符串 = 最近一次是成功的）。
+    static var lastFail: String {
+        failLock.lock(); defer { failLock.unlock() }
+        return _lastFail
+    }
+
+    private static func noteFail(_ s: String) {
+        failLock.lock(); _lastFail = s; failLock.unlock()
+    }
+
+    /// 把 URLSession 的错误翻译成「用户能照做」的一句话
+    private static func humanize(_ e: Error) -> String {
+        if let u = e as? URLError {
+            switch u.code {
+            case .timedOut:
+                return "本机服务响应太慢（处理超时）。它可能正忙着抓数据，等十几秒再试一次就好。"
+            case .cannotConnectToHost, .cannotFindHost, .networkConnectionLost,
+                 .notConnectedToInternet, .dnsLookupFailed:
+                return "本机服务没有在运行。请退出看板（⌘Q）再重新打开；如果反复如此，"
+                     + "说明这台电脑上缺少看板需要的运行环境，请把这句话截图反馈。"
+            default:
+                break
+            }
+        }
+        return "本机服务没应答（\(e.localizedDescription)）。"
+    }
+
+    /// 发一次请求，顺手把「失败原因」记下来。返回 nil 时 lastFail 一定非空。
+    private static func send(_ req: URLRequest) async -> [String: Any]? {
+        do {
+            let (data, resp) = try await DataStore.session.data(for: req)
+            if let http = resp as? HTTPURLResponse, http.statusCode >= 400 {
+                noteFail("本机服务返回了错误码 \(http.statusCode)。请退出看板（⌘Q）重新打开。")
+                return nil
+            }
+            guard let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+                noteFail("本机服务的回包看不懂（不是 JSON）。请退出看板（⌘Q）重新打开。")
+                return nil
+            }
+            noteFail("")            // ★ 成功必须清掉上一次的失败原因
+            return obj
+        } catch {
+            noteFail(humanize(error))
+            return nil
+        }
+    }
+
     /// 拼 URL。
     /// 不能再用 `appendingPathComponent` 带查询串：它会把 `?` 转义成 `%3F`，
     /// `/api/status?probe=1` 于是变成一个叫「status?probe=1」的路径 —— 404。
@@ -29,8 +94,7 @@ enum Bridge {
         var req = URLRequest(url: url(path, query))
         req.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
         req.timeoutInterval = timeout
-        guard let (data, _) = try? await DataStore.session.data(for: req) else { return nil }
-        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        return await send(req)
     }
 
     @discardableResult
@@ -40,13 +104,16 @@ enum Bridge {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.timeoutInterval = timeout
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
-        guard let (data, _) = try? await DataStore.session.data(for: req) else { return nil }
-        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        return await send(req)
     }
 
     static func ok(_ d: [String: Any]?) -> Bool { (d?["ok"] as? Bool) ?? false }
+
     static func msg(_ d: [String: Any]?, _ fallback: String = "") -> String {
-        (d?["msg"] as? String) ?? (d?["error"] as? String) ?? fallback
+        if let s = (d?["msg"] as? String) ?? (d?["error"] as? String), !s.isEmpty { return s }
+        // d == nil 说明压根没拿到回包 —— 这时「为什么没拿到」比 fallback 有用得多
+        if d == nil, !lastFail.isEmpty { return lastFail }
+        return fallback
     }
 
     /// 一条能给用户看的说明：优先 `msg`，再退回 `reason`。
@@ -58,6 +125,7 @@ enum Bridge {
         for k in ["msg", "reason", "error"] {
             if let s = d?[k] as? String, !s.isEmpty { return s }
         }
+        if d == nil, !lastFail.isEmpty { return lastFail }
         return fallback
     }
 
@@ -79,16 +147,56 @@ enum Bridge {
         return last
     }
 
-    /// 不管桥接服务在不在，先尽力拉起来
+    /// 等本机服务真的能用。
+    ///
+    /// 返回值：`nil` = 已就绪；非空字符串 = 给用户看的失败原因。
+    ///
+    /// 以前引导页是「无脑等 8 秒」（20 × 400ms）就往下发请求 —— 后端要是压根
+    /// 起不来（最典型：这台电脑上没有可用的 Python），8 秒之后必然连不上，
+    /// 请求失败又被翻译成「登录失败，检查账号密码后重试」。用户于是去改密码，
+    /// 而问题跟他账号半点关系都没有。这是「四个账号只有 DeepSeek 登得进去」
+    /// 最可能的真身（DeepSeek 走 App 内网页，完全不经过后端）。
+    ///
+    /// 现在：① 等就绪；② 后端一旦**明确**报出起不来的原因（status == .offline）
+    /// 就立刻停，把那句话原样交给用户，不再白等。
+    static func waitReady(seconds: Double = 30) async -> String? {
+        if await DataStore.shared.healthy() { return nil }
+        await MainActor.run { DataStore.shared.launchServicePublic() }
+
+        let steps = Int(max(1, seconds / 0.4))
+        for _ in 0..<steps {
+            if await DataStore.shared.healthy() { return nil }
+            let s = await MainActor.run { DataStore.shared.status }
+            if case .offline(let m) = s, !m.isEmpty { return m }
+            try? await Task.sleep(nanoseconds: 400_000_000)
+        }
+        let final = await MainActor.run { DataStore.shared.status }
+        if case .offline(let m) = final, !m.isEmpty { return m }
+        return "本机服务启动超时。请退出看板（⌘Q）后重新打开再试。"
+    }
+
+    /// 不管桥接服务在不在，先尽力拉起来（不关心结果的老调用路径）
     static func launchIfNeeded() {
         Task { @MainActor in
-            if await DataStore.shared.healthy() { return }
-            DataStore.shared.launchServicePublic()
-            for _ in 0..<24 {
-                if await DataStore.shared.healthy() { return }
-                try? await Task.sleep(nanoseconds: 500_000_000)
-            }
+            _ = await waitReady(seconds: 30)
         }
+    }
+
+    /// 告诉后端「用户已经进场」（在用户点下「让我们开始吧」那一刻调）。
+    ///
+    /// ★ 为什么非要有这一句 ★
+    ///   后端是 App 一启动就起来的，比开场动画早得多。它有几处会去用户的
+    ///   下载 / 桌面 / 文稿里找课表 xlsx，而 macOS 只要被列一次目录就会弹
+    ///   「"ManageBac-Buddy" 想要访问您的下载文件夹」的授权框 —— 那个框会
+    ///   直接盖在快闪 / hello 上。用户的原话：
+    ///       「这种弹窗都要放到用户点击『让我们开始吧』这个按钮之后，
+    ///         不要影响前面动画的观感」
+    ///   所以在收到这句话之前，后端只扫自己的导出目录（不触发任何授权）。
+    ///
+    ///   幂等，重复调没有副作用；调失败也不要紧 —— 后端自己还有一道
+    ///   两分钟的兜底（见 seiue._READY_FALLBACK_SEC），不会永久卡住。
+    static func ready() async {
+        _ = await post("/api/ready", [:], timeout: 8)
     }
 }
 

@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 
 /* ======================================================================
-   ManageBac 看板 · 设计系统（Mac / Windows 两端同源）
+   ManageBac-Buddy · 设计系统（Mac / Windows 两端同源）
 
    八项美学维度都收敛到这一处，改这里 = 两端一起变：
      ① 布局与空间   Space / Metrics
@@ -857,6 +857,46 @@ enum PreviewFlags {
     static var splashAt: Double? = nil
     /// `--hello <0…1>`：把彩虹 hello 冻结在某个书写进度（0 未落笔，1 写满）。
     static var helloT: Double? = nil
+    /// `--hitch <秒>`：在**真窗口**里跑 hello，收集实际的帧间隔与每帧绘制耗时。
+    ///
+    /// ★ 为什么非得开这个后门 ★
+    /// `--bench` 走的是 ImageRenderer（离屏 CPU/独立渲染路径），它测出来的
+    /// p99 只有 0.58ms，可用户肉眼看真机就是「h 那里非常卡」—— 两者长期对不上。
+    /// 原因就是离屏那条路根本不经过真正的合成器与显示链路：帧有没有按时送到、
+    /// 一帧在 GPU 上排了多久的队，它一概看不到。
+    /// 这个开关把「帧到达时刻」和「Canvas 里真正画了多久」一起记下来，
+    /// 于是能把「卡」拆成两种截然不同的病：
+    ///   帧到达间隔抖动  → 是调度/合成的问题（TimelineView、掉帧）
+    ///   某帧绘制耗时尖峰 → 是某一笔画本身太贵（比如最长的那个环）
+    /// 对症才能下药。正常运行时它是 false，界面上没有任何入口能写它。
+    static var hitchProbe = false
+}
+
+/// `--hitch` 的采样桶。
+///
+/// Canvas 的绘制闭包**每次重画都会被调用**（包括窗口 resize、主题切换等
+/// 与动画无关的重画），所以这里只记录、不在闭包里做任何判断，跑完再统一分析。
+/// 用锁保护是因为 SwiftUI 在真窗口里可能从不同线程触发布局。
+final class HitchProbe: @unchecked Sendable {
+    static let shared = HitchProbe()
+    private let lock = NSLock()
+    private var _arrivals: [Double] = []
+    private var _draws: [Double] = []
+    private var _phases: [Double] = []
+
+    /// arrival = 这一帧的时间线时刻（秒）；draw = 这一帧画了多久（毫秒）；
+    /// phase = 该帧在循环里的相位（用来定位「卡」发生在第几秒）。
+    func note(arrival: Double, draw: Double, phase: Double) {
+        lock.lock(); defer { lock.unlock() }
+        _arrivals.append(arrival); _draws.append(draw); _phases.append(phase)
+    }
+
+    func drain() -> (arrivals: [Double], draws: [Double], phases: [Double]) {
+        lock.lock(); defer { lock.unlock() }
+        let r = (_arrivals, _draws, _phases)
+        _arrivals = []; _draws = []; _phases = []
+        return r
+    }
 }
 
 /// 玻璃强度 → 材质的落点。设置里可调，真实影响观感。

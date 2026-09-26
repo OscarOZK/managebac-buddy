@@ -22,7 +22,7 @@ enum ThemeAssets {
            FileManager.default.fileExists(atPath: u.path) {
             return u
         }
-        // ② 数据目录（分发版就是 ~/Library/Application Support/ManageBac 看板 Mac/themes）
+        // ② 数据目录（分发版就是 ~/Library/Application Support/ManageBac-Buddy/themes）
         let data = MBBPaths.home.appendingPathComponent("themes/\(palette)/\(file)")
         if FileManager.default.fileExists(atPath: data.path) { return data }
         // ③ 老开发布局

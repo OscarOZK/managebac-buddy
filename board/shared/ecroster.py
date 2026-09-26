@@ -252,7 +252,7 @@ def _adopt_side_cache(path):
     """同目录没有 .json 解析缓存时，去老数据目录里找一份同名副本搬过来。
 
     背景：App 分发版把数据目录从 ~/.mbboard 挪到了
-    ~/Library/Application Support/ManageBac 看板 Mac/，
+    ~/Library/Application Support/ManageBac-Buddy/，
     于是历史解析结果全留在了老地方 —— 在新目录里看起来「名单读不出来了」。
     实际上数据一直都在，只是没跟着搬家。
     """

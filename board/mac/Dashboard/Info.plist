@@ -7,25 +7,28 @@
 	     「系统设置 → 隐私与安全性」里「已阻止 "XXX" 以保护 Mac」，
 	     用的就是这里。安装导览里写的软件名必须和屏幕上出现的完全一致，
 	     差一个字使用者就会怀疑自己找错了地方。
-	     （bundle 目录名也一并叫 ManageBac-Dashboard，三处统一。） -->
+	     （bundle 目录名也一并叫 ManageBac-Buddy，三处统一。） -->
 	<key>CFBundleName</key>
-	<string>ManageBac-Dashboard</string>
+	<string>ManageBac-Buddy</string>
 	<key>CFBundleDisplayName</key>
-	<string>ManageBac-Dashboard</string>
+	<string>ManageBac-Buddy</string>
 	<key>CFBundleExecutable</key>
 	<string>MBDashboard</string>
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.mbboard.dashboard</string>
+	<string>com.mbboard.buddy</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
+	<!-- 版本号。改这里就够了，build.sh 直接把它搬进包。
+	     CFBundleVersion 必须是**单调递增**的整数序列，不看语义 —— 
+	     3.5 只要比 3 大就行，所以写 35；写成 "3.5" 也能比，但纯数字最不容易出岔。 -->
 	<key>CFBundleShortVersionString</key>
-	<string>3.0</string>
+	<string>3.5</string>
 	<key>CFBundleVersion</key>
-	<string>3</string>
+	<string>35</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>26.0</string>
 	<key>LSApplicationCategoryType</key>

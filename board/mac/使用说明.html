@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>ManageBac-Dashboard · Mac 版使用说明</title>
+<title>ManageBac-Buddy · Mac 版使用说明</title>
 <style>
   :root {
     --accent: #0071e3;
@@ -87,15 +87,31 @@
 <div class="wrap">
 
   <header>
-    <div class="kicker">🧪 ManageBac-Dashboard</div>
+    <div class="kicker">🧪 ManageBac-Buddy</div>
     <h1>使用说明</h1>
     <p class="sub">作业、课表、成绩、Teams 学习待办，加一个能直接问的 AI · 适配 macOS 26 液态玻璃</p>
   </header>
 
+  <h2><span class="n">✦</span>这一版带来了什么</h2>
+  <div class="card">
+    <p>v3.5 做了三件你每天都会碰到的手感变化——<strong>动画</strong>、<strong>玻璃</strong>、<strong>登录</strong>。（另有一件你多半感觉不到、却让它在别人电脑上也能跑起来的事：浏览器与 Python 现在都内置在 App 里。）</p>
+
+    <h3 style="margin:16px 0 6px;font-size:14px">动起来的每一处，都是想清楚过的</h3>
+    <p>悬停、按下、选中、翻页、数字滚动……每一类动作各有自己的时长与曲线，不再各自为政地写死同一个 0.2 秒。改一个档位，整块界面的节奏一起变；页面切换现在<strong>认方向</strong>，往后翻和往前翻各走各自那一侧。设置里的「减弱动效」也不再是摆设——它是真的总闸。</p>
+
+    <h3 style="margin:16px 0 6px;font-size:14px">玻璃要透光，也要挡光</h3>
+    <p>卡片、侧栏、按钮与菜单栏面板的玻璃质感重新拆成了三层：最外一圈只折射、不上色，中间一层是毛玻璃加主题底色，最外沿压一道高光——于是它像真的玻璃那样有了厚度。玻璃强度跟着主题走，也能随时在设置里调。</p>
+
+    <h3 style="margin:16px 0 6px;font-size:14px">登录，回到「不必被注意」的样子</h3>
+    <p>冷启动不再谎报「已登录」；连不上的时候，界面说的是<strong>为什么没连上</strong>，而不是一句会让你去改密码的「请检查账号密码」。引导页也改成要你填<strong>完整的学校邮箱</strong>。登录本该按下去就进去，然后被你忘掉。</p>
+
+    <p style="margin-top:12px;color:var(--ink-3);font-size:13px">（首次打开时那段一帧帧写出来的 MB BUDDY 与彩虹 hello，现在只演一次；退出重进直接落在看板上。）</p>
+  </div>
+
   <h2><span class="n">1</span>一个 App，两个入口</h2>
   <div class="card">
     <ul>
-      <li><strong>ManageBac-Dashboard.app</strong> —— 唯一的 App。双击打开完整看板窗口。</li>
+      <li><strong>ManageBac-Buddy.app</strong> —— 唯一的 App。双击打开完整看板窗口。</li>
       <li><strong>菜单栏图标</strong> —— 同一个 App 常驻菜单栏，点图标看今天的作业与倒计时；关掉主窗口它也还在（真退出走菜单栏面板里的「退出」或 <span class="kbd">⌘</span>+<span class="kbd">Q</span>）。</li>
       <li>以前是「看板 + 菜单栏」两个 App，已合并成一个：一个进程、一份数据、一份通知——不会再有同一条消息弹两遍、或者旧成绩反复冒出来的情况。</li>
     </ul>
@@ -201,7 +217,7 @@
       <li>Teams 板块走微软官方接口（Microsoft Graph），同样是<strong>只读</strong>：只读你自己的邮件、日程、任务与聊天，不会修改、不会代发任何内容。</li>
       <li>希悦课表走本机的浏览器会话读取，同样<strong>只读</strong>。</li>
       <li>ManageBac 的密码（若你选择保存）存在 macOS 钥匙串里，只有当前用户能读；微软那边只存一个可随时吊销的授权令牌。</li>
-      <li><strong>看板自己不传任何数据</strong>：没有本项目的服务器，作业 / 成绩 / 课表一律只落在这台电脑上（<code>~/Library/Application Support/ManageBac-Dashboard/</code>，在访达里按 ⌘⇧G 粘贴这个路径就能进去）。</li>
+      <li><strong>看板自己不传任何数据</strong>：没有本项目的服务器，作业 / 成绩 / 课表一律只落在这台电脑上（<code>~/Library/Application Support/ManageBac-Buddy/</code>，在访达里按 ⌘⇧G 粘贴这个路径就能进去）。</li>
       <li><strong>但灵析 AI 是例外，这一点要说清楚</strong>：你发给它的问题、以及随消息带上的文件 / 截图，会<strong>直接发送给 DeepSeek</strong>（就像你在网页版里聊天一样），由 DeepSeek 按其条款处理。所以<strong>不要把不想外传的东西丢给灵析 AI</strong>；其余四个分区的内容不会经过它。登录态（cookie）只存在这台电脑的网页存储里，随时可以在「账号管理」里退出清除。</li>
       <li>断网时用上次抓到的数据继续显示，并标注「更新于 xx:xx」。</li>
     </ul>
@@ -223,7 +239,7 @@
     </table>
   </div>
 
-  <footer>ManageBac-Dashboard · 作业 / 成绩 / 课表只留在这台 Mac 上（灵析 AI 的对话内容会发给 DeepSeek，见第 7 节）</footer>
+  <footer>ManageBac-Buddy · 作业 / 成绩 / 课表只留在这台 Mac 上（灵析 AI 的对话内容会发给 DeepSeek，见第 7 节）</footer>
 </div>
 </body>
 </html>

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict'
 /*
- * ManageBac 看板 —— 云端中转（relay）
+ * ManageBac-Buddy —— 云端中转（relay）
  * ---------------------------------------------------------------
  * 为什么需要它：
  *   数据的唯一来源是「跑在 Mac 上的桥接服务」（登录态 + 无界面浏览器都在那边）。
@@ -166,7 +166,7 @@ function round3(x) { return Math.round(x * 1000) / 1000 }
 
 const PAGE = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>ManageBac 看板 · 云端中转</title>
+<title>ManageBac-Buddy · 云端中转</title>
 <style>
  :root{color-scheme:light dark}
  body{margin:0;font:15px/1.7 -apple-system,"PingFang SC",system-ui,sans-serif;
@@ -185,7 +185,7 @@ const PAGE = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
  @media (prefers-color-scheme:dark){body{background:#000;color:#f5f5f7}
    .card{background:#1c1c1e}td{border-color:#2c2c2e}}
 </style></head><body><div class="card">
-<h1>ManageBac 看板 · 云端中转</h1>
+<h1>ManageBac-Buddy · 云端中转</h1>
 <div class="sub">Mac 推上来的最新一份数据就存在这里，手表在任何网络下都能取到。</div>
 <table id="t"></table>
 <div class="foot">本页不显示任何成绩 / 待办内容，只报状态。</div>

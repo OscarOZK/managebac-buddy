@@ -341,7 +341,7 @@ function pageHtml(ok, detail) {
     + 'h1{font-size:20px;margin:0 0 6px}p{margin:0;color:#6e6e73;font-size:14px;word-break:break-all}'
     + '</style><div class="c"><div class="t">' + (ok ? '&#10003;' : '&#9888;') + '</div>'
     + '<h1>' + (ok ? '登录成功' : '登录未完成') + '</h1>'
-    + '<p>' + (ok ? '已连上 ManageBac 看板，这个窗口可以关掉了。' : detail) + '</p></div>';
+    + '<p>' + (ok ? '已连上 ManageBac-Buddy，这个窗口可以关掉了。' : detail) + '</p></div>';
 }
 
 async function deviceLogin(onCode) {

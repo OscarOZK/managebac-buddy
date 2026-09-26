@@ -35,6 +35,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import threading
 import time
 import urllib.parse
@@ -61,6 +62,56 @@ def _debug_port(scope, fallback):
 
 PORT = _debug_port("seiue", 9224)
 SITE = "https://yly.seiue.com"
+
+# 浏览器查找共用 board/shared/browserfind.py（bridge.py / mssession.py 也用它）
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+try:
+    import browserfind as _bfind
+except Exception:                                        # pragma: no cover
+    _bfind = None
+
+# 本机回环请求一律直连 —— 详见 board/shared/netlocal.py
+try:
+    import netlocal as _netlocal
+except Exception:                                        # pragma: no cover
+    _netlocal = None
+
+# 内置网页引擎（App 里的 WebKit）。在线时下面所有「找 Chromium / 起 Chrome /
+# 连调试端口」的代码都不再执行 —— 用户机器上一个浏览器都没装也能看希悦课表。
+try:
+    import webengine as _we
+except Exception:                                        # pragma: no cover
+    _we = None
+
+
+def engine_on():
+    """内置引擎在不在线。每次现问 —— 用户是先开看板、再点希悦的。"""
+    try:
+        return bool(_we and _we.attached())
+    except Exception:
+        return False
+
+
+_DIRECT = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
+def _netopen(req, timeout=10):
+    """打开一个请求。本机地址直连，外网地址照旧。"""
+    if _netlocal is not None:
+        return _netlocal.open_local(req.full_url, data=req.data,
+                                    headers=dict(req.header_items()),
+                                    method=req.get_method(), timeout=timeout)
+    try:
+        host = (urllib.parse.urlparse(req.full_url).hostname or "").lower()
+    except Exception:
+        host = ""
+    if host in ("127.0.0.1", "localhost", "::1") or host.startswith("127."):
+        return _DIRECT.open(req, timeout=timeout)
+    return urllib.request.urlopen(req, timeout=timeout)
+
+
 HOME_URL = "https://yly.seiue.com/"
 LOGIN_URL = HOME_URL
 
@@ -74,6 +125,9 @@ TTL = 3600
 _lock = threading.RLock()
 _CACHE = {"data": None, "ts": 0.0, "error": None}
 _MARKER = os.path.join(MBB, ".seiue-session")
+# 「希悦登过了」这条标记的最长时效（秒）。45 天 —— 够宽松，又不会让一条
+# 早就失效的登录态一直骗着界面说「已连接」。
+_SESSION_TTL = 45 * 24 * 3600
 
 
 # ==========================================================================
@@ -153,12 +207,18 @@ class _WS(object):
 
 
 def _http_json(url, timeout=4):
+    # 本机回环请求一律直连（详见 board/shared/netlocal.py）：
+    # 装过 VPN / 代理客户端的机器上，HTTP_PROXY 会把 127.0.0.1 也丢给代理，
+    # 于是「浏览器没起来 / 调试端口不通」这类假故障会莫名其妙地冒出来。
     req = urllib.request.Request(url, headers={"Host": "127.0.0.1:%d" % PORT})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
+    with _netopen(req, timeout=timeout) as r:
         return json.loads(r.read().decode("utf-8", "replace"))
 
 
 def cdp_up():
+    """浏览器在不在跑。内置引擎在线时就是「在跑」。"""
+    if engine_on():
+        return True
     try:
         _http_json("http://127.0.0.1:%d/json/version" % PORT)
         return True
@@ -167,6 +227,17 @@ def cdp_up():
 
 
 def pages():
+    """当前页面列表。内置引擎这条路返回**同形状**的字典（id / url / title），
+    下面所有「找希悦页 / 合并重复标签」的逻辑因此一个字都不用改。"""
+    if engine_on():
+        out = []
+        for t in (_we.tabs() or []):
+            if not isinstance(t, dict):
+                continue
+            out.append({"id": t.get("id") or "",
+                        "url": t.get("url") or "",
+                        "title": t.get("title") or ""})
+        return out
     try:
         return [t for t in _http_json("http://127.0.0.1:%d/json/list" % PORT)
                 if t.get("type") == "page"]
@@ -183,6 +254,17 @@ def seiue_page():
 
 
 def _eval(page, expression, timeout=25):
+    if engine_on():
+        # 用 _we.call 而不是 eval_text：拿不到东西时要**抛异常**，
+        # 调用方（fetch / probe）靠它区分「页面返回了空」和「脚本没跑成」。
+        tid = (page or {}).get("id") or ""
+        args = {"js": expression}
+        if tid:
+            args["id"] = tid
+        r = _we.call("eval", timeout=max(5.0, float(timeout)), **args)
+        if not r.get("ok"):
+            raise IOError(str(r.get("error") or "内置引擎执行脚本失败")[:200])
+        return r.get("value")
     u = urllib.parse.urlparse(page["webSocketDebuggerUrl"])
     ws = _WS(u.hostname, u.port or PORT, u.path, timeout=timeout)
     try:
@@ -213,7 +295,14 @@ def _page_cmd(page, method, params=None, timeout=12):
       `dispatchEvent(new MouseEvent(...))` **都不管用** —— 希悦那个按钮上挂着
       的是 antd 的合成事件链，纯 JS 派发的点击进不去。只有走 CDP 的
       `Input.dispatchMouseEvent`（浏览器层面的真实鼠标事件）才点得动。
+
+    ★ 内置引擎这条路不走这里 ★
+      引擎里等价的能力是 App 自己用 `NSEvent` 造一次**真·鼠标事件**喂给窗口
+      （见 WebEngine.swift 的 click），比 CDP 那条还更「真」。所以本函数在
+      引擎在线时直接返回 None，全部由 _real_click 提前分流。
     """
+    if engine_on():
+        return None
     try:
         u = urllib.parse.urlparse(page["webSocketDebuggerUrl"])
     except Exception:
@@ -240,7 +329,18 @@ def _page_cmd(page, method, params=None, timeout=12):
 
 
 def _real_click(page, x, y):
-    """在页面坐标 (x, y) 上按下并松开一次真实鼠标左键。"""
+    """在页面坐标 (x, y) 上按下并松开一次真实鼠标左键。
+
+    坐标就是 JS `getBoundingClientRect()` 出来的那套（左上角原点）。
+    内置引擎和 CDP 两条路用的都是这套语义 —— 引擎侧在 App 里做
+    「左上 → 左下」的换算，这里不需要知道。
+    """
+    if engine_on():
+        tid = (page or {}).get("id") or ""
+        args = {"x": float(x), "y": float(y)}
+        if tid:
+            args["id"] = tid
+        return bool(_we.call("click", timeout=12.0, **args).get("ok"))
     for t in ("mouseMoved", "mousePressed", "mouseReleased"):
         p = {"type": t, "x": float(x), "y": float(y), "button": "left", "clickCount": 1}
         if t == "mouseMoved":
@@ -252,11 +352,13 @@ def _real_click(page, x, y):
 
 
 def _open_tab(url):
+    if engine_on():
+        return _we.open_url(url, new=True) is not None
     target = "http://127.0.0.1:%d/json/new?%s" % (PORT, urllib.parse.quote(url, safe=""))
     for method in ("PUT", "GET"):
         try:
             req = urllib.request.Request(target, method=method)
-            with urllib.request.urlopen(req, timeout=6) as r:
+            with _netopen(req, timeout=6) as r:
                 r.read()
             return True
         except Exception:
@@ -269,10 +371,40 @@ def _open_tab(url):
 # ==========================================================================
 
 def chrome_path():
-    for p in (_MAC_CHROME, _WIN_CHROME):
+    """任意一个 Chromium 内核的浏览器都行 —— 详见 board/shared/browserfind.py。
+
+    ★ 改之前这里只查两条写死的路径 ★
+        <数据目录>/chrome/Google Chrome for Testing.app/Contents/MacOS/...
+        <数据目录>/chrome/chrome.exe
+    用户机器上只要没被我们下载过，希悦就必然报「找不到 Chrome for Testing」，
+    而屏幕上给用户看的就是这句 —— 他既没装过、也不知道该装什么。
+    实测：本机希悦整条链路（probe / fetch / 真点「导出」拿到 xlsx）都是好的，
+    唯一挡住别人的就是这一条路径查找。
+
+    ★ 内置引擎在线时返回占位串 ★ 上层多处是「先查有没有浏览器，没有就准备
+    一份」的写法；引擎就在 App 身体里，那些准备全是多余的，返回占位串让它们
+    统一走「已就绪」这一支。
+    """
+    if engine_on():
+        return "app://webengine"
+    if _bfind is not None:
+        return _bfind.find() or None
+    for p in (_MAC_CHROME, _WIN_CHROME):        # 兜底：模块没加载起来时的老逻辑
         if os.path.exists(p):
             return p
     return None
+
+
+def browser_hint():
+    """没找到浏览器时给用户的一句话（顺带在后台准备一份）。"""
+    if engine_on():
+        return ""            # 引擎在，浏览器这件事不用准备
+    if chrome_path():
+        return ""
+    if _bfind is not None:
+        _bfind.prepare_async()
+        return (_bfind.state().get("fix") or "正在自动准备浏览器（首次约 150MB）…")
+    return "本机还没有可用的浏览器"
 
 
 def _clear_stale_locks():
@@ -338,13 +470,28 @@ def _reclaim_profile():
 
 
 def launch_browser(url=None):
+    if engine_on():
+        # 内置引擎：不下载、不起外部进程、不用配置目录，只是开一个标签页。
+        # 顺手把下载目录指到 <数据目录>/seiue-downloads —— 用户点了「导出课表」
+        # 之后文件会直接落进我们看得见的地方。
+        if url and not _we.open_url(url, new=True):
+            _CACHE["error"] = (_we.NOT_ONLINE if not _we.attached()
+                               else "内置浏览器打不开这个网址")
+            return False
+        try:
+            _set_download_dir()
+        except Exception:
+            pass
+        return True
     if cdp_up():
         if url:
             _open_tab(url)
         return True
     exe = chrome_path()
     if not exe:
-        _CACHE["error"] = "找不到 Chrome for Testing"
+        # 顺手在后台准备一份，并给一句能照做的说明 ——
+        # 原来的「找不到 Chrome for Testing」对用户零信息量。
+        _CACHE["error"] = browser_hint() or "本机还没有可用的浏览器"
         return False
     try:
         os.makedirs(PROFILE, exist_ok=True)
@@ -454,21 +601,74 @@ def show_browser():
 
 EXPORT_DIR = os.path.join(MBB, "seiue-downloads")
 
-# 会去找的地方：App 自己下载的目录 + 用户日常的下载/桌面。
-# 名字不要求统一（各校导出名不一样），认的是**表的内容**。
-_SCAN_DIRS = [
-    EXPORT_DIR,
+# ★ 这两类目录的待遇必须**分开** ★
+#
+#   列一下 ~/Downloads / ~/Desktop / ~/Documents，macOS 会**立刻**弹出
+#   「"ManageBac-Buddy" 想要访问您的下载文件夹」这种授权框。而后端是
+#   App 一启动就起来的 —— 只要开局就去扫，那个框必定盖在开场动画
+#   （快闪 / hello）上。用户的原话：
+#       「如果有一些比如说请求查看文件这样的弹窗，需要点确认的，
+#         这种弹窗都要放到用户点击『让我们开始吧』这个按钮之后，
+#         不要影响前面动画的观感」
+#
+#   所以拆成两档：
+#     · **窄扫** —— 只扫 EXPORT_DIR（我们自己的目录，不触发任何授权）。
+#       后台每 15 秒的「自动认领课表」走这档。网页导出的表本来就落在
+#       EXPORT_DIR（_set_download_dir 把下载目录指到这儿），功能一点不损。
+#     · **宽扫** —— 再加用户的下载 / 桌面 / 文稿。只在**用户自己点了按钮**
+#       （同步课表 / 导入课表）时才摊开，而且还要等 App 报一句「用户已进场」
+#       （mark_user_ready）。这时候弹授权框是用户自己的动作引出来的，合理；
+#       而且弹在动画之后，不碍观感。
+_USER_DIRS = [
     os.path.join(HOME, "Downloads"),
     os.path.join(HOME, "Desktop"),
     os.path.join(HOME, "Documents"),
 ]
+_SCAN_DIRS = [EXPORT_DIR] + _USER_DIRS
+
+# 「用户已进场」迟迟没报过来时的兜底秒数 —— 保证闸门不会永久卡死。
+# 开场动画统共十几秒，两分钟足以说明那个信号丢在路上了。
+_READY_FALLBACK_SEC = 120
+_BOOT_AT = time.time()
+_user_ok = threading.Event()
+
+
+def mark_user_ready():
+    """App 收到「让我们开始吧」之后调用 —— 放开用户目录的扫描。"""
+    _user_ok.set()
+
+
+def user_ready():
+    """用户是否已经进场（或者信号丢了、兜底时间已过）。"""
+    return _user_ok.is_set() or (time.time() - _BOOT_AT) > _READY_FALLBACK_SEC
+
+
+def _scan_dirs(broad=False):
+    """这一轮该扫哪些目录。
+
+    `broad=True` 的含义是「用户主动让我们去找文件」—— 只有这种请求才有资格
+    碰用户目录，而且还得等用户真的进了场（见 user_ready）。
+    默认是窄扫：**任何后台线程都别想碰到用户的文件夹**。
+    """
+    if broad and user_ready():
+        return list(_SCAN_DIRS)
+    return [EXPORT_DIR]
+
 
 # 只认这么新的表。太老的（去年那学期）不该再被当成当前课表。
 _XLSX_MAX_AGE = 200 * 24 * 3600
 
 
 def _browser_cmd(method, params=None, timeout=8):
-    """浏览器级的 CDP 调用（窗口坐标、下载行为这类不属于某个页面的命令）。"""
+    """浏览器级的 CDP 调用（窗口坐标、下载行为这类不属于某个页面的命令）。
+
+    ★ 内置引擎在线时返回 None ★ 引擎没有「浏览器级 CDP 域」；
+    窗口改走 _unpark_window 的引擎分支，下载目录改走 _set_download_dir
+    的引擎分支，两者都已提前分流。留 None 是为了漏进来的调用点
+    「安静地什么都不做」，而不是抛异常把整条链路带崩。
+    """
+    if engine_on():
+        return None
     try:
         ver = _http_json("http://127.0.0.1:%d/json/version" % PORT)
         wsurl = ver.get("webSocketDebuggerUrl")
@@ -506,6 +706,11 @@ def _set_download_dir():
         os.makedirs(EXPORT_DIR, exist_ok=True)
     except Exception:
         return False
+    if engine_on():
+        # 引擎侧只要告诉它「文件往这儿放」：WebKit 的下载委托会把文件
+        # 落到这个目录（同名自动加 -2/-3），不需要「允许下载」那一步 ——
+        # 引擎里 decidePolicyFor 已经把「能显示的就显示、其余一律下载」写死了。
+        return bool(_we.set_download_dir(EXPORT_DIR))
     ok = False
     for method, params in (
         ("Browser.setDownloadBehavior",
@@ -541,7 +746,20 @@ def _unpark_window(page, width=1280, height=900):
       Chrome 会忽略 bounds 里的 left/top —— 于是窗口一直停在屏幕外那条
       老坐标上（实测 -1160,33：屏幕上只露出右边一条边），
       用户看到的正是「窗口跑到屏幕特别靠左、只露出来一个边边」。
+
+    内置引擎这条路没有那套规矩（AppKit 不会把坐标夹回屏内），一次 show 就够。
     """
+    if engine_on():
+        tid = (page or {}).get("id") or None
+        ok = _we.show(tab=tid, title="希悦")
+        # ★ 声明「别动这个窗口」 ★ 引擎只有一个 App 窗口，Teams 那边的后台
+        #   保活看到「窗口是 normal 状态」时会把它收走 —— 用户正在希悦上登录
+        #   就白登了。窗口期写进共享层（webengine），两边都读得到。
+        try:
+            _we.hold_window(1800)
+        except Exception:
+            pass
+        return bool(ok)
     info = _browser_cmd("Browser.getWindowForTarget", {"targetId": page.get("id")}) or {}
     wid = info.get("windowId")
     if wid is None:
@@ -741,11 +959,14 @@ def _order_label(n):
         return str(n)
 
 
-def _list_candidates():
-    """候选文件（只 stat，不解析）：[(mtime, path)]，新的在前。"""
+def _list_candidates(broad=False):
+    """候选文件（只 stat，不解析）：[(mtime, path)]，新的在前。
+
+    `broad` 见 `_scan_dirs`：默认只扫我们自己的 EXPORT_DIR。
+    """
     now = time.time()
     cands, seen = [], set()
-    for d in _SCAN_DIRS:
+    for d in _scan_dirs(broad):
         try:
             if not os.path.isdir(d):
                 continue
@@ -773,14 +994,20 @@ def _list_candidates():
     return cands
 
 
-def newest_candidate():
-    """最近改动过的那张候选表（不解析内容）—— 给后台线程做「有没有新变化」用。"""
-    c = _list_candidates()
+def newest_candidate(broad=False):
+    """最近改动过的那张候选表（不解析内容）—— 给后台线程做「有没有新变化」用。
+
+    ★ 后台调用一律用默认的 narrow（只 EXPORT_DIR）★
+      否则每 15 秒就会去列一次用户的下载夹，那等于每 15 秒给 macOS 一次
+      弹授权框的机会。网页导出的表是我们自己落到 EXPORT_DIR 的，
+      窄扫完全够用。
+    """
+    c = _list_candidates(broad)
     return c[0] if c else None
 
 
-def download_stamp():
-    c = newest_candidate()
+def download_stamp(broad=False):
+    c = newest_candidate(broad)
     if not c:
         return ""
     return "%s|%d" % (c[1], int(c[0]))
@@ -791,8 +1018,12 @@ def find_exported_xlsx():
 
     认的是**内容**不是文件名：名字带不带学校名、有没有空格都无所谓，
     只要解析出来是一张课表就算。太老的（超过 _XLSX_MAX_AGE）跳过。
+
+    ★ 宽扫（broad=True）★ 这条路只由用户的「导入课表」按钮走到 ——
+      用户是在说「去我电脑上找找那张表」，所以这时候翻他的下载/桌面/
+      文稿是理所当然的；授权框也只会在这时候出现。
     """
-    for _, p in _list_candidates()[:12]:
+    for _, p in _list_candidates(broad=True)[:12]:
         try:
             d = parse_schedule_xlsx(p)
         except Exception:
@@ -945,10 +1176,15 @@ def _dismiss_modals(page, rounds=3):
         time.sleep(0.5)
 
 
-def _xlsx_before():
-    """记一下现在有哪些 xlsx（名字+大小），好认出「新下下来的那一个」。"""
+def _xlsx_before(dirs):
+    """记一下现在有哪些 xlsx（名字+大小），好认出「新下下来的那一个」。
+
+    `dirs` 由调用方显式传进来：**快照和之后的比对必须用同一份目录表**。
+    否则「用户已进场」的状态要是在这两次调用之间翻了一次，用户手里原有的
+    那张表就会被误当成"刚下下来的那个" —— 于是同步成功、内容却是旧的。
+    """
     seen = set()
-    for d in _SCAN_DIRS:
+    for d in dirs:
         try:
             for fn in os.listdir(d):
                 if fn.lower().endswith(".xlsx") and not fn.startswith("~$"):
@@ -958,9 +1194,9 @@ def _xlsx_before():
     return seen
 
 
-def _newest_xlsx(before):
+def _newest_xlsx(before, dirs):
     cands = []
-    for d in _SCAN_DIRS:
+    for d in dirs:
         try:
             for fn in os.listdir(d):
                 if not fn.lower().endswith(".xlsx") or fn.startswith("~$"):
@@ -1017,7 +1253,11 @@ def export_via_page(timeout=50.0):
     if not btn:
         return None, "页面上没找到「导出」按钮"
 
-    before = _xlsx_before()
+    # 导出是用户点的按钮，所以这里可以宽扫（把用户的下载/桌面/文稿也纳进来），
+    # 万一 _set_download_dir 没生效、文件落到了他真实的下载夹里也能认出来。
+    # 目录表只算一次，下面快照与比对共用同一份。
+    dirs = _scan_dirs(broad=True)
+    before = _xlsx_before(dirs)
     _real_click(p, btn["x"], btn["y"])
 
     # 等「导出课程」配置窗
@@ -1057,10 +1297,28 @@ def export_via_page(timeout=50.0):
     clicked_link = False
 
     def _ready():
-        got = _newest_xlsx(before)
+        got = _newest_xlsx(before, dirs)
         if not got:
             return None
-        return None if os.path.exists(got + ".crdownload") else got
+        if os.path.exists(got + ".crdownload"):
+            return None
+        if engine_on():
+            # ★ WebKit 不像 Chrome 那样先写 .crdownload、写完再改名 ★
+            #   它一开始就用最终文件名写盘，所以「文件存在」不等于「写完了」。
+            #   不判断的话我们会拿到一个只写了一半的 xlsx，解析出来是
+            #   「表是空的」—— 用户看到的是「导出成功了但课表还是没有」。
+            #   这里用「大小连着两次一样」当写完的判据。
+            try:
+                s1 = os.path.getsize(got)
+            except Exception:
+                return None
+            time.sleep(0.4)
+            try:
+                if os.path.getsize(got) != s1 or s1 <= 0:
+                    return None
+            except Exception:
+                return None
+        return got
 
     while time.time() < end:
         got = _ready()
@@ -1088,12 +1346,21 @@ def _adopt(path):
     搬过来之后统一叫「课表.xlsx」，每次覆盖，用户的下载夹保持原样。
 
     只搬**这一次导出产生的那一个文件**，绝不碰用户自己的别的下载件。
+
+    ★ 顺带修掉一个会慢慢堆积的麻烦 ★
+      内置引擎的下载委托为了让同名文件不被覆盖，会依次起成
+      「…-2.xlsx」「…-3.xlsx」（WebEngine.swift 里那段是有意这么写的：
+      宁可多一个副本，也不敢替用户删东西）。可如果这里对「已经在导出目录里」
+      的文件直接原样返回，那每次同步都会多留一个副本，几个月后
+      用户的 seiue-downloads 里就是几十个同内容的表。所以现在**统一改名成
+      「课表.xlsx」**（覆盖上一次）：导出目录里永远只有一份。
     """
     try:
-        if os.path.dirname(os.path.abspath(path)) == os.path.abspath(EXPORT_DIR):
+        dst = os.path.join(EXPORT_DIR, "课表.xlsx")
+        if (os.path.dirname(os.path.abspath(path)) == os.path.abspath(EXPORT_DIR)
+                and os.path.basename(path) == "课表.xlsx"):
             return path
         os.makedirs(EXPORT_DIR, exist_ok=True)
-        dst = os.path.join(EXPORT_DIR, "课表.xlsx")
         try:
             if os.path.exists(dst):
                 os.remove(dst)
@@ -1225,7 +1492,13 @@ _PROBE = r"""
   const looksLogin = /登录|账号|密码|sign in/i.test(body) && hasPwd;
   const ready = !!document.querySelector('[data-test-id="seiue-schedule-container"]')
              || !!document.querySelector('.seiue-schedule-container');
-  return JSON.stringify({href, hasPwd, onLogin, looksLogin, ready,
+  // 只有登录后才会有的东西：用户名 / 头像 / 「退出」入口。
+  // 加这一条是因为「课表容器还没渲染出来」和「没登录」必须能分开 ——
+  // 前者只是慢，后者要用户去登。
+  const hasUser = /退出|注销/.test(body)
+             || !!document.querySelector('[class*="avatar"],[class*="user-info"],'
+                                       + '[class*="userInfo"],[class*="user-name"]');
+  return JSON.stringify({href, hasPwd, onLogin, looksLogin, ready, hasUser,
                          title: document.title, bodyLen: body.length});
 })()
 """
@@ -1234,11 +1507,13 @@ _PROBE = r"""
 def _close_tab(target_id):
     if not target_id:
         return False
+    if engine_on():
+        return bool(_we.close(tab=target_id))
     target = "http://127.0.0.1:%d/json/close/%s" % (PORT, target_id)
     for method in ("PUT", "GET"):
         try:
             req = urllib.request.Request(target, method=method)
-            with urllib.request.urlopen(req, timeout=6) as r:
+            with _netopen(req, timeout=6) as r:
                 r.read()
             return True
         except Exception:
@@ -1298,24 +1573,72 @@ def probe():
     return _page_state(25)
 
 
+def _judge_logged(info):
+    """由一次页面探测的结果判断「登录了没有」。
+
+    ★ 这是全模块唯一的判据，别再各写一份 ★
+    以前 `logged_in()` 和 `status()` 各写了一套，而且是两套**不同**的规则：
+      · logged_in()：不是登录页就算登录；
+      · status()：  同一套弱规则，还会把「已登录」标记写进磁盘。
+    于是「没登录也被判成已登录」在两个地方同时成立，界面从此长期说已连接。
+    现在三条规则集中在这里：
+      ① 页面出现密码框 / URL 像登录页 / 文字像登录页 → **没登录**；
+      ② 课表容器在（ready）      → 登录了；
+      ③ 页面上有用户信息或「退出」 → 登录了。
+    只有 ① 不成立、且 ②③ 至少一个成立，才算登录。
+    """
+    if not info:
+        return False
+    if info.get("hasPwd") or info.get("onLogin") or info.get("looksLogin"):
+        return False
+    return bool(info.get("ready") or info.get("hasUser"))
+
+
+def _note_session():
+    """把「希悦登过了」记到磁盘（记的是时刻，有时效，见 has_session）。"""
+    try:
+        with open(_MARKER, "w") as f:
+            f.write(str(time.time()))
+    except Exception as e:
+        # 静默失败在这里是有代价的：写不进去 → has_session() 恒为假 →
+        # 界面永远显示「未连接」，而用户其实已经登好了。
+        sys.stderr.write("希悦登录标记写入失败：%s\n" % e)
+
+
 def logged_in(fast=False):
     # fast=True 给「等页面就绪」的轮询用：一轮最多 6 秒，轮询才转得动。
     # 否则一次 probe 内部就有 25 秒上限，几十轮叠起来能拖十来分钟。
     info = _page_state(6 if fast else 25)
     if not info:
         return False
+    # 明确看到登录页 = 一定没登录。顺手把「已登录」标记删掉 ——
+    # 不删的话 has_session() 会一直为真，界面长期写着「已连接」，
+    # 而每次同步课表都失败，用户完全不知道问题在哪。
     if info.get("hasPwd") or info.get("onLogin") or info.get("looksLogin"):
+        forget_session()
         return False
-    try:
-        with open(_MARKER, "w") as f:
-            f.write(str(time.time()))
-    except Exception:
-        pass
+    if not _judge_logged(info):
+        return False
+    _note_session()
     return True
 
 
 def has_session():
-    return os.path.exists(_MARKER)
+    """磁盘上那条「希悦登过了」的标记还在不在（且不过期）。
+
+    标记里写的是写入时刻。加一道时效有两个好处：
+      · 希悦的登录态本身会过期，过期之后的标记是假信息；
+      · 老版本写下的标记里没有「只有登录后才有的正证据」这个前提
+        （见 logged_in），太旧的一律不认，让用户重新确认一次。
+    """
+    try:
+        with open(_MARKER) as f:
+            ts = float((f.read() or "0").strip() or 0)
+    except Exception:
+        return False
+    if ts <= 0:
+        return False
+    return (time.time() - ts) < _SESSION_TTL
 
 
 def forget_session():
@@ -1619,20 +1942,23 @@ def status():
     # 一秒钟能问出好几趟来。
     up = cdp_up()
     info = _page_state(10) if up else {}
-    logged = False
-    if info and not (info.get("hasPwd") or info.get("onLogin") or info.get("looksLogin")):
-        logged = True
-        try:
-            with open(_MARKER, "w") as f:
-                f.write(str(time.time()))
-        except Exception:
-            pass
+    # ★ 判据和 logged_in() 共用同一个函数 ★ 以前这里另写了一套更弱的规则，
+    #   于是「没登录」在 status 里也会被判成「已登录」，还会把标记写进磁盘 ——
+    #   界面从此长期显示已连接，点同步却次次失败。
+    logged = _judge_logged(info)
+    if logged:
+        _note_session()
+    elif info and (info.get("hasPwd") or info.get("onLogin") or info.get("looksLogin")):
+        forget_session()      # 明确是登录页 → 标记作废
     return {
         "ok": True,
         "browserUp": up,
         "loggedIn": logged,
         "hasSession": has_session(),
         "chrome": bool(chrome_path()),
+        # 和 Teams 的 auth_state 口径对齐：一眼看出这条链路是靠 App 内置引擎
+        # 还是靠外部 Chrome（排错时最想知道的就是这一条）。
+        "engine": engine_on(),
         "cached": bool(_CACHE["data"]),
         "cachedAt": int(_CACHE["ts"] * 1000) if _CACHE["ts"] else 0,
         "error": _CACHE.get("error") or "",

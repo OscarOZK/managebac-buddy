@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 
 /* ======================================================================
-   ManageBac 看板 · 主窗口
+   ManageBac-Buddy · 主窗口
    自定义骨架（不用 NavigationSplitView），为的是让液态玻璃完全贯穿：
      左：玻璃侧边栏（分区导航 + 状态）
      右：内容区（分区标题 + 滚动内容）

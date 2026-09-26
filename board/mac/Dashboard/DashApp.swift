@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 
 /* ======================================================================
-   ManageBac 看板 —— 现在是**一个** App（第 18 轮合并）
+   ManageBac-Buddy —— 现在是**一个** App（第 18 轮合并）
    ----------------------------------------------------------------------
    以前是主看板 + 菜单栏两个独立的 .app，各跑一个进程。两个进程同时：
      · 各跑一遍 Notifier.evaluate → 同一条消息弹两遍；
@@ -51,17 +51,30 @@ struct MBApp: App {
     }
 
     var body: some Scene {
-        Window("ManageBac 看板", id: "main") {
+        Window("ManageBac-Buddy", id: "main") {
             Group {
+                // ★ 开场动画只演一次 ★
+                //   快闪 + 彩虹 hello 这两幕，只在**这个安装第一次打开 App**
+                //   时演。退出后台再进来 —— 直接就是看板，一帧动画都不放。
+                //   想再看一遍：菜单「重新运行首次配置向导」/ 设置页「开始引导」
+                //   —— 那两处会把下面两个标记一起清掉，于是完整重演。
+                //
+                //   两个标记各管一件事，缺一个都有洞：
+                //     onboarded   = 新手导览走完了没有 —— **功能**状态，
+                //                   决定还要不要接引导（英语名、希悦、主题这些
+                //                   没配完的话，光有看板是空壳）。
+                //     introPlayed = 这台机器进过开场了没有 —— **演出**状态，
+                //                   决定还演不演动画。
+                //   只看 onboarded 会漏掉「动画看完了、导览走到一半就退出」
+                //   这种夹在中间的状态：那时 onboarded 还是 false，
+                //   下次进来**刚看过的动画又从头演一遍** —— 正是用户不要的。
                 if settings.onboarded {
-                    DashRoot(store: store)
-                } else if !UserDefaults.standard.bool(forKey: FirstRunFlow.seenKey) {
-                    // 真·第一次打开：先演快闪 + 彩虹 hello，点「让我们开始吧」进引导。
-                    // （从设置里重跑向导不算 —— 那种时候直接进引导，别再演一遍。）
-                    FirstRunFlow(onboarding: OnboardingView(onFinish: { }))
+                    DashRoot(store: DataStore.shared)
+                        .transition(.opacity)
                 } else {
-                    // 首次使用：先走引导，配好再进看板
-                    OnboardingView(onFinish: { })
+                    // 没走完导览。进过开场就直接接上引导（不重播动画），
+                    // 没进过就从头演完整两幕。
+                    FirstRunFlow(skipGreeting: settings.introPlayed)
                 }
             }
             .background(MainWindowBridge())
@@ -89,7 +102,12 @@ struct MBApp: App {
                 .keyboardShortcut("o", modifiers: [.command, .shift])
                 Divider()
                 Button("重新运行首次配置向导") {
+                    // 两个标记一起清：onboarded 决定「接回引导」，
+                    // introPlayed 决定「开场两幕重演一遍」。
+                    // 只清 onboarded 的话，引导会接上、但动画不会演 ——
+                    // 而用户要的就是「重走新手导览也会触发」那两段动画。
                     BoardSettings.shared.onboarded = false
+                    BoardSettings.shared.introPlayed = false
                 }
             }
         }
@@ -110,6 +128,22 @@ final class MBLaunch: NSObject, NSApplicationDelegate {
             s.activatePaletteOnly()
             s.syncECStudent()
             DataStore.shared.begin()
+
+            // 把「这次启动走了哪一支」落一行日志。这两支的差别只体现在
+            // 界面上（有没有快闪 + hello），截图看权限、肉眼又要等人盯着，
+            // 一行日志是最省事的判据 —— 也方便以后有人反馈"怎么又演动画了"
+            // 时直接对上。
+            let branch: String
+            if s.onboarded { branch = "直进看板（不播任何动画）" }
+            else if s.introPlayed { branch = "跳过开场动画，直接接上新手导览" }
+            else { branch = "播快闪 + hello（首次进 App）" }
+            Log.write("启动：onboarded=\(s.onboarded) introPlayed=\(s.introPlayed) → \(branch)")
+
+            // 内置网页引擎：把浏览器搬进 App 自己身体里。
+            // ManageBac / Teams / 希悦 三个集成的登录都靠它，
+            // 这样别人电脑上不用装 Chrome，也不用等 150MB 下载。
+            WebEngine.shared.start()
+            WebEngineChannel.shared.start()
 
             // 菜单栏图标：和大看板同进程，不再需要另一个 App
             let c = PanelController()

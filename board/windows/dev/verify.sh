@@ -18,7 +18,7 @@ SCROLL="${3:-0}"
 THEME="${4:-}"
 
 NODE_BIN_DIR="${MBBOARD_NODE_BIN_DIR:-$(dirname "$(command -v node)")}"
-UD="$HOME/Library/Application Support/ManageBac 看板"
+UD="$HOME/Library/Application Support/ManageBac-Buddy"
 PROBE="/tmp/mbwin_probe_$SEC.json"
 
 # 让引擎认为缓存是新鲜的；顺便把主题写进设置，方便验证深色模式

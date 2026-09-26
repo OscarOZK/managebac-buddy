@@ -135,11 +135,11 @@ enum Notifier {
     ///
     /// ★ 必须带 `?id=<bundle id>` ★
     /// 只写 `...Notifications-Settings.extension` 只会把「通知」这个总页面
-    /// 打开，左侧还停在列表上，用户还得自己在一长串 App 里找「ManageBac 看板」——
+    /// 打开，左侧还停在列表上，用户还得自己在一长串 App 里找「ManageBac-Buddy」——
     /// 而他要解决的本来就是「这个 App 的通知没开」，多这一趟纯属添堵。
     /// 带上 id 之后系统会直接定位到本 App 的那一页（macOS 13+ 支持）。
     static func openSystemSettings() {
-        let bid = Bundle.main.bundleIdentifier ?? "com.mbboard.dashboard"
+        let bid = Bundle.main.bundleIdentifier ?? "com.mbboard.buddy"
         // 带 ?id= 的两种 pane 名都试：新系统用 extension 式标识，老系统用
         // com.apple.preference.notifications —— 系统自带的「地图」App 就是后者
         // 加 ?id= 定位到自己的那一页的。带 id 的排前面，裸的总页只做兜底。
@@ -175,7 +175,7 @@ enum Notifier {
        [key: 首次见到的时刻]。key 见过就永远不再播；播种过的类别记在 "seed:<类别>"。
 
        ⚠️ 路径必须走 MBBPaths.home，**不能**写死 ~/.mbboard：
-         分发版的数据目录是 ~/Library/Application Support/ManageBac 看板 Mac/，
+         分发版的数据目录是 ~/Library/Application Support/ManageBac-Buddy/，
          而且启动时会把老目录里的 notify-state.json 迁过来。这里要是继续写老目录，
          迁移就白做了，而且 App 会一直在别人的家目录里留垃圾。 */
     private static var stateURL: URL {

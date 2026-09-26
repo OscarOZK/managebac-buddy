@@ -2,7 +2,7 @@
   "name": "mbboard-relay",
   "version": "1.0.0",
   "private": true,
-  "description": "ManageBac 看板云端中转：Mac 推、手表拉，接口与 bridge.py 完全一致",
+  "description": "ManageBac-Buddy云端中转：Mac 推、手表拉，接口与 bridge.py 完全一致",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

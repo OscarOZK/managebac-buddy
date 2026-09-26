@@ -1,6 +1,6 @@
 'use strict';
 /* ======================================================================
-   ManageBac 看板 · Windows 桌面应用
+   ManageBac-Buddy · Windows 桌面应用
    主进程：托盘（= Windows 上的「菜单栏」）+ 一个原生窗口 + 独立抓取引擎。
    点开即用：双击 exe → 托盘出现图标；点托盘图标或桌面窗口都能用。
    ====================================================================== */
@@ -73,7 +73,7 @@ function createWindow() {
     minWidth: Math.min(1020, dflt.width),
     minHeight: Math.min(660, dflt.height),
     show: false,
-    title: 'ManageBac 看板',
+    title: 'ManageBac-Buddy',
     autoHideMenuBar: true,
     backgroundColor: '#00000000',
     webPreferences: {
@@ -192,7 +192,7 @@ async function updateTray(state) {
   if (s.showYellow && c.yellow > 0) parts.push(`黄 ${c.yellow} 项`);
   if (s.showBlue && c.blue > 0) parts.push(`蓝 ${c.blue} 项`);
   const tip = parts.length ? parts.join(' · ') : '暂无红/黄/蓝待办';
-  tray.setToolTip('ManageBac 看板\n' + tip);
+  tray.setToolTip('ManageBac-Buddy\n' + tip);
 
   // Windows：任务栏按钮上的原生叠加角标
   if (isWin && win && !win.isDestroyed()) {
@@ -210,7 +210,7 @@ async function updateTray(state) {
 
 function createTray() {
   tray = new Tray(nativeImage.createEmpty());
-  tray.setToolTip('ManageBac 看板');
+  tray.setToolTip('ManageBac-Buddy');
   refreshTrayMenu();
 
   // Windows：双击托盘图标直接开窗口

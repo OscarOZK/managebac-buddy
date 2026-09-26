@@ -27,7 +27,12 @@ final class DataStore: ObservableObject {
             case .loading:     return "读取中…"
             case .ok:          return "数据已就绪"
             case .notLoggedIn: return "登录已失效"
-            case .offline:     return "看板没在运行"
+            // ★ 这里必须把具体原因带出去 ★
+            //   `.offline` 是带着一句话构造出来的（「没找到 Python 3 …」之类），
+            //   而以前 text 把它扔掉、只回一句「看板没在运行」——
+            //   于是用户看到的永远是同一句废话，真正的原因只躺在日志里。
+            //   分发出去的 App 里没有人会去翻日志，原因必须在屏幕上。
+            case .offline(let m): return m.isEmpty ? "看板没在运行" : m
             }
         }
     }
@@ -156,10 +161,25 @@ final class DataStore: ObservableObject {
         busy = false
     }
 
+    /// 把一份负载落成界面状态。
+    ///
+    /// `loggedIn` 是**三态**，不是两态：
+    ///   `false` → 明确取不到数据（掉登录）
+    ///   `true`  → 明确能取到
+    ///   `nil`   → 还不知道。冷启动的占位负载就是这样：后台正在抓，这会儿谁也不知道
+    ///
+    /// ★ 以前这里只判「== false」，于是 nil 和 true 一起落进 `.ok`。再叠上占位
+    ///   负载里那句写死的 loggedIn=true，结果就是「还没抓到」被显示成「数据已就绪」，
+    ///   而屏幕上一片空白；后台抓取一旦失败，这个假绿会永远挂着，
+    ///   用户只能看到「什么都没有」，永远等不到那句真正的原因。
     private func apply(_ p: Payload) {
         payload = p
         lastFetch = Date()
-        status = (p.loggedIn == false) ? .notLoggedIn : .ok
+        switch p.loggedIn {
+        case .some(false): status = .notLoggedIn
+        case .some(true):  status = .ok
+        case .none:        status = .loading      // 未定，不敢说「已就绪」
+        }
         Notifier.evaluate(store: self, settings: BoardSettings.shared)
     }
 
@@ -176,6 +196,27 @@ final class DataStore: ObservableObject {
             try? await Task.sleep(nanoseconds: 1_500_000_000)
             if let p = try? await fetchPayload(), p.updating != true { apply(p); return }
         }
+        // ★ 36 秒没等到就**不要静默放弃**。
+        //   以前这里直接 return，界面停在哪算哪；而它通常停在「还没确定」上，
+        //   用户盯着一片空数据，既没有错也没有解释。补问一次 /api/status ——
+        //   它给的是**当下**的登录判定（不是缓存里的旧值），足够给出结论。
+        await refreshStatusOnly()
+    }
+
+    /// 只问一次「现在到底登没登上」。
+    ///
+    /// 为什么用 /api/status 而不是 /api/data：数据那条路可能正卡在后台抓取上，
+    /// 它会一直回占位负载；而 status 是当场探测的结论，不掺缓存。
+    /// 拿不到明确结论（还是 nil）就什么都不动 —— 宁可维持「读取中」，也不猜。
+    private func refreshStatusOnly() async {
+        var req = URLRequest(url: DataStore.base.appendingPathComponent("api/status"))
+        req.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        guard let (data, _) = try? await DataStore.session.data(for: req),
+              let d = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let logged = d["loggedIn"] as? Bool
+        else { return }
+        status = logged ? .ok : .notLoggedIn
+        Log.write("首抓超时，按 /api/status 判定 loggedIn=\(logged)：\(d["reason"] ?? "")")
     }
 
     /// 服务在不在，而且**是不是我们这一份**。
@@ -446,6 +487,56 @@ final class DataStore: ObservableObject {
         }
     }
 
+    /// 这个 python3 是不是真的能跑。
+    ///
+    /// ★ 为什么不能只看 isExecutableFile ★
+    /// macOS（Catalina 之后）在每一台机器上都放着 /usr/bin/python3，但它只是
+    /// 一层壳：真正干活的是「Xcode 命令行工具」里的那份。没装命令行工具的机器上
+    /// 跑它会弹出系统弹窗「要安装命令行开发者工具吗？」，然后退出 —— 一点也不
+    /// 「可执行」。而我们原来恰恰用最后兜底的 /usr/bin/python3 + isExecutableFile
+    /// 判断，于是「找到了 python3」被当成「python3 能用」，后端静悄悄地起不来，
+    /// 屏幕上只剩下「看板没应答」。这就是朋友那台机器上全线失败的样子。
+    ///
+    /// 所以：① 对 /usr/bin/python3 先在文件系统层面确认它背后的真身存在（避免
+    /// 弹出那个吓人的系统弹窗）；② 其余候选真跑一次 `-V`，并且加硬超时。
+    private func usablePython(_ path: String) -> Bool {
+        guard FileManager.default.isExecutableFile(atPath: path) else { return false }
+
+        // ① /usr/bin/python3 只是壳：真身在命令行工具里
+        if path == "/usr/bin/python3" {
+            let real = ["/Library/Developer/CommandLineTools/usr/bin/python3",
+                        "/Applications/Xcode.app/Contents/Developer/usr/bin/python3"]
+            guard real.contains(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
+                Log.write("跳过 /usr/bin/python3：它只是一层壳，本机没装命令行工具")
+                return false
+            }
+        }
+
+        // ② 真跑一次，确认能执行、版本够（后端要 ≥3.8）
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: path)
+        p.arguments = ["-c", "import sys; raise SystemExit(0 if sys.version_info >= (3, 8) else 9)"]
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = FileHandle.nullDevice
+        let done = DispatchSemaphore(value: 0)
+        p.terminationHandler = { _ in done.signal() }
+        do { try p.run() } catch {
+            Log.write("python3 候选 \(path) 起不来：\(error.localizedDescription)")
+            return false
+        }
+        // 硬超时：壳程序会挂着等用户点弹窗，不设超时 App 就卡在启动画面
+        if done.wait(timeout: .now() + 8) == .timedOut {
+            p.terminate()
+            Log.write("python3 候选 \(path) 8 秒没回应，跳过")
+            return false
+        }
+        if p.terminationStatus != 0 {
+            Log.write("python3 候选 \(path) 退出码 \(p.terminationStatus)，跳过")
+            return false
+        }
+        return true
+    }
+
     /// 顺手把本地数据服务拉起来。
     ///
     /// 三件事跟以前不一样，都是为了「换台电脑也能跑」：
@@ -454,32 +545,63 @@ final class DataStore: ObservableObject {
     ///   ② 显式把 MBBOARD_DATA 传给后端，让它的登录态/缓存落在用户自己的
     ///      数据目录里，而不是代码目录里；
     ///   ③ Python 解释器按候选清单找，不再绑定某台机器上某个路径。
+    ///
+    /// ★ 第 ④ 条是本轮加的：清单里现在**第一位是 App 包内自带的 Python**。
+    ///   理由很直白 —— 要求「学生电脑上恰好装了 python3」是过分的要求，
+    ///   而这是「四个账号全部登不进去」的最大单一原因。自带一份，
+    ///   这一整类失败就彻底不存在了。
     private func launchService() {
         let bridge = MBBPaths.bridgeScript.path
         guard FileManager.default.fileExists(atPath: bridge) else {
             Log.write("找不到 bridge.py：\(bridge)")
-            status = .offline("看板没在运行")
+            status = .offline("看板后台文件缺失（找不到 bridge.py）。请重新安装看板。")
             return
         }
 
         let home = NSHomeDirectory()
         // 后端只依赖 Python 标准库（http.server / urllib / subprocess），
         // 所以任何一个 ≥3.8 的 python3 都够用，不需要 pip 装东西。
-        // 顺序：用户数据目录里自带的一份 → Homebrew（Apple 芯片 / Intel）→
-        //       Command Line Tools 自带的 → PATH 里随便哪个。
-        let candidates = [
+        //
+        // 顺序：★ App 包内自带的运行时（分发版一定有）★ → 用户数据目录里自带的
+        //      → Homebrew（Apple 芯片 / Intel）→ PATH 里随便哪个
+        //      → 最后才是系统的 /usr/bin/python3（它可能只是一层壳，见 usablePython）
+        var candidates: [String] = []
+        if let bundled = MBBPaths.bundledPython { candidates.append(bundled.path) }
+        candidates += [
             "\(MBBPaths.home.path)/venv/bin/python3",
             "\(home)/.mbboard/venv/bin/python3",
             "/opt/homebrew/bin/python3",
             "/usr/local/bin/python3",
             "/usr/bin/python3"
-        ] + (ProcessInfo.processInfo.environment["PATH"] ?? "")
+        ]
+        candidates += (ProcessInfo.processInfo.environment["PATH"] ?? "")
             .split(separator: ":").map { "\($0)/python3" }
 
-        guard let py = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
-            // 这条提示要能照做：不是「环境有问题」，而是「点这里装一下」。
-            Log.write("找不到可用的 python3")
-            status = .offline("没找到 Python 3 —— 在终端里跑一句 xcode-select --install 就有了")
+        var py: String?
+        // 去重，避免同一个解释器被跑好几遍（每次要起一个进程）
+        var seen = Set<String>()
+        for c in candidates where seen.insert(c).inserted {
+            if usablePython(c) { py = c; break }
+
+            // 轮到「包内自带的那份」且它跑不起来时，先别急着往下试别的解释器 ——
+            // 它多半是被 com.apple.quarantine 拦了（清标记是另一条路径，见
+            // prepareBundledPython）。把运行时整份搬到数据目录，从那儿再执行一次。
+            // 这是最后一道保险：走到这一步说明连自带运行环境都用不了，
+            // 不救一下用户就只能看到「找不到可用的 Python」。
+            if let bundled = MBBPaths.bundledPython, c == bundled.path,
+               let moved = MBBPaths.relocateBundledPython(), usablePython(moved) {
+                Log.write("包内 Python 不可用，改用重定位后的副本：\(moved)")
+                py = moved
+                break
+            }
+        }
+
+        guard let py else {
+            // 这条提示要能照做：不是「环境有问题」，而是「怎么办」。
+            // 正常情况下走不到这里 —— 分发版包里自带 Python。
+            Log.write("找不到可用的 python3（候选 \(candidates.count) 个全部不可用）")
+            status = .offline("这台电脑上找不到可用的 Python 运行环境，看板后台起不来。"
+                              + "请重新安装看板（安装包里自带运行环境），或把这句话截图反馈。")
             return
         }
 

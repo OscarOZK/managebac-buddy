@@ -346,7 +346,7 @@ enum Schedule {
     ///      别人的课表，而且因为它是源码里的常量，还永远刷不掉。
     ///
     /// 现在改成从数据目录读：
-    ///     ~/Library/Application Support/ManageBac 看板 Mac/timetable.json
+    ///     ~/Library/Application Support/ManageBac-Buddy/timetable.json
     ///     {"1": [{"from":1,"to":1,"subject":"…","room":"…","teacher":"…",
     ///              "mode":"走班","color":"calc"}, …], "2": […]}
     /// 文件不存在 = 空课表，课程页显示「还没有课表」并引导去同步希悦；

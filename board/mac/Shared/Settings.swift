@@ -133,7 +133,21 @@ final class BoardSettings: ObservableObject {
     @Published var gradeLabel: String = "G10"    { didSet { save() } }
     /// 是否走完了首次引导
     @Published var onboarded: Bool = false       { didSet { save() } }
+    /* ---------------- 开场演出（快闪 + 彩虹 hello）是否已经放过 ----------------
+       与 onboarded 是**两件事**，不能合并：
+         · onboarded    = 「新手导览走完了没有」—— 是**功能**上的状态
+                          （英语名填了没、希悦连了没、主题选了没）。
+         · introPlayed  = 「这台机器上的这段开场动画放过了没有」—— 是**演出**上的状态。
+       只用一个 onboarded 会漏掉一种情况：用户看完了动画、导览走到一半就 ⌘Q，
+       下次进来 onboarded 还是 false —— 于是**刚看过的动画又从头演一遍**。
+       用户的要求是「下载完首次进 APP 才演，退出重进就不再演」，所以另立这个标记。
 
+       写入时机：FirstRunFlow 一露面就置 true（见 FirstRun.swift）。
+       也就是「这台机器已经进过开场了」，哪怕用户第 1 秒就关掉 ——
+       这正是「只有下载完首次进 APP 才有」的字面含义。
+       清空时机：重置向导（resetForOnboarding）与两处「重新走一遍引导」入口 ——
+       用户明确要求「重走新手导览也会触发」这两个动画。 */
+    @Published var introPlayed: Bool = false     { didSet { save() } }
     /* ---------------- 学校 ManageBac 地址 ----------------
        默认值就是本校（见 SchoolURL.fallback）。同学拿到 App 直接能用；
        别的学校的人在这里改一处，不用碰代码。后端每次抓取前也会重读它。 */
@@ -498,6 +512,10 @@ final class BoardSettings: ObservableObject {
         var displayName: String? = nil
         var gradeLabel: String? = nil
         var onboarded: Bool? = nil
+        /// 开场演出（快闪 + hello）是否放过。可选 —— 老 settings.json 里没有这一项，
+        /// 解出来是 nil，落到默认 false，也就是老用户升上来还会再演一次，
+        /// 演完就永久置位了。
+        var introPlayed: Bool? = nil
 
         // ① 外观与主题
         var paletteID: String? = nil
@@ -650,6 +668,7 @@ final class BoardSettings: ObservableObject {
         if let v = b.displayName { displayName = v }
         if let v = b.gradeLabel { gradeLabel = v }
         if let v = b.onboarded { onboarded = v }
+        if let v = b.introPlayed { introPlayed = v }
         // ① 外观与主题
         if let v = b.paletteID { paletteID = v }
         if let v = b.themeBackdrop { themeBackdrop = v }
@@ -780,6 +799,7 @@ final class BoardSettings: ObservableObject {
         // ⓪ 档案
         b.englishName = englishName; b.displayName = displayName
         b.gradeLabel = gradeLabel; b.onboarded = onboarded
+        b.introPlayed = introPlayed
         // ① 外观与主题
         b.paletteID = paletteID; b.themeBackdrop = themeBackdrop
         b.theme = theme.rawValue; b.density = density.rawValue; b.corner = corner.rawValue
@@ -954,6 +974,7 @@ final class BoardSettings: ObservableObject {
         let keep = launchAtLogin
         let keepName = englishName, keepDisplay = displayName, keepGrade = gradeLabel
         let keepOnboarded = onboarded
+        let keepIntro = introPlayed
         loading = true
         paletteID = "standard"; themeBackdrop = true
         theme = .system; density = .comfortable; corner = .regular
@@ -1009,6 +1030,8 @@ final class BoardSettings: ObservableObject {
         // 档案原样保留
         englishName = keepName; displayName = keepDisplay
         gradeLabel = keepGrade; onboarded = keepOnboarded
+        // 「恢复默认外观」不该把开场动画放回来 —— 那跟外观没关系，留着。
+        introPlayed = keepIntro
         // 「默认停在哪一页」也回出厂：这一项和别的项一样受「恢复默认」影响，
         // 并顺手还回一次性校正名额（标记存在 UserDefaults 里）。
         // 两件事必须一起做 —— 只还名额、不在这里改值的话，用户按完「恢复默认」
@@ -1035,6 +1058,9 @@ final class BoardSettings: ObservableObject {
         displayName = ""
         gradeLabel = "G10"
         onboarded = false                // 回到引导
+        introPlayed = false              // ★ 开场演出也放回来 ★
+        // 用户要求：「重走新手导览也会触发」MB Buddy 快闪 + hello。
+        // 走到这里就是彻底回出厂，两个标记一起清，下次挂出 FirstRunFlow 会从头演。
         loading = false
         save()
         clearECStudent()
