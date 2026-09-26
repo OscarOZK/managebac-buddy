@@ -428,7 +428,7 @@ struct RenderCheck {
                     .frame(width: width, height: height ?? 838, alignment: .center)
             )
         } else if section == "hello" {
-            // 彩虹 hello：配 --hello <0…1> 冻在某个书写进度
+            // 空心霓虹 hello：配 --hello <0…1> 冻在循环相位（0.08=墨点 0.4=书写中 0.55=写满 0.87=擦除中）
             view = AnyView(
                 HelloGreeting(onStart: { })
                     .environmentObject(s)

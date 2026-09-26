@@ -14,10 +14,12 @@ import AppKit
                       文本换成 MB Buddy；视频里 kimi 定版是大写 KIMI，
                       所以这里定版也用大写 —— 手写阶段仍是品牌原样
                       「MB Buddy」。
-     第二幕 · hello   彩虹辉光连笔「hello」反复书写，模拟苹果新设备
-                      开机的那一笔（用户原话：「一定要和苹果那个一模一样」）。
-                      写满停一拍，再从笔迹起端抽走，循环往复。
-                      写完第一遍时，下方浮出「让我们开始吧」。
+     第二幕 · hello   空心霓虹彩虹「hello」反复书写：样式取用户给的
+                      霓虹管字形图（空心玻璃管 + 彩虹辉光 + 波浪尾笔），
+                      动效按用户给的书写视频 1:1 复刻 —— 墨点先在起笔处
+                      涨起来 → 尾笔甩出 → 回锋 → 匀速写满 → 驻留 →
+                      从 h 那头吸干 → 空一拍，如此往复（6.02s 一轮）。
+                      快闪一播完，下方就浮出液态玻璃「让我们开始吧」。
      第三幕 · 引导    点按钮 → hello 上浮散场 → 导览第一屏浮入。
 
    实现纪律（都踩过坑）：
@@ -256,49 +258,158 @@ private struct SeededGenerator: RandomNumberGenerator {
     }
 }
 
-// MARK: - ② 彩虹 hello（循环书写）+ 开始按钮
+// MARK: - ② 空心霓虹 hello（逐帧复刻视频笔顺）+ 液态玻璃开始按钮
+
+/// 第二幕的笔顺来源（务必先读）：
+/// 用户给了两份素材 —— 一张空心彩虹霓虹「hello」的样式图，和一段
+/// 6.02s 的书写动画视频。要求：**样式**取图（空心玻璃管 + 彩虹辉光），
+/// **书写/擦除的动效**按视频 1:1 复刻。
+///
+/// 下面的单笔画路径不是手描的，是从视频里**逐帧追踪笔尖**算出来的：
+///   · 每帧取「新增墨迹」的骨架片段（t_first 标定每个像素首次出现的帧）；
+///   · 片段按时间顺序链接，交界处用骨架 Dijkstra 寻路；
+///   · 最后对视频笔画掩码做 EDT 验收 —— 路径居中（平均 EDT 16.6/管半宽~45），
+///     对真实笔迹的覆盖率 95%。笔顺、交叉、回锋全部是视频里真实的写法。
+/// 起笔多出的 4 个锚点是样式图里那条波浪尾笔（视频的入笔没有尾巴，
+/// 图里有 —— 按图的字形补上，映射到同一坐标系）。
 
 struct HelloGreeting: View {
     var onStart: () -> Void
 
-    /// 书写进度：0 = 未落笔，1 = 一整笔写完
-    @State private var progress: Double = 0
-    /// 擦除进度：0 = 不擦，1 = 整笔从头抽干（trim 起点 0→1）
-    @State private var erase: Double = 0
-    @State private var buttonShown = false
-    @State private var exiting = false
     @EnvironmentObject private var settings: BoardSettings
+    @State private var start: Date? = nil
+    @State private var exiting = false
+    @State private var buttonIn = false
 
-    /// 连笔「hello」的单笔画路径（笔顺：h→e→l→l→o→甩尾），
-    /// 锚点用 Catmull-Rom 拟合成贝塞尔 —— 逐版对着渲染稿调出来的。
+    /// 连笔「hello」单笔画锚点（Catmull-Rom 拟合成贝塞尔）。
+    /// 坐标系无所谓——下面会按包围盒归一化再缩放，只要比例对就行。
+    static let rawAnchors: [(Double, Double)] = [
+            (14, 393),
+            (52, 418),
+            (98, 451),
+            (126, 415),
+
+            (124, 360),
+            (166, 344),
+            (187, 305),
+            (209, 268),
+
+            (249, 247),
+            (266, 206),
+            (283, 164),
+            (291, 120),
+
+            (278, 78),
+            (237, 76),
+            (212, 113),
+            (201, 157),
+
+            (194, 201),
+            (190, 246),
+            (191, 291),
+            (177, 333),
+
+            (170, 378),
+            (165, 422),
+            (168, 400),
+            (171, 355),
+
+            (185, 312),
+            (203, 272),
+            (244, 252),
+            (287, 255),
+
+            (307, 293),
+            (307, 338),
+            (305, 383),
+            (326, 420),
+
+            (368, 425),
+            (412, 415),
+            (454, 398),
+            (489, 371),
+
+            (517, 336),
+            (526, 292),
+            (509, 252),
+            (466, 245),
+
+            (434, 275),
+            (420, 318),
+            (422, 362),
+            (444, 399),
+
+            (480, 423),
+            (525, 428),
+            (567, 415),
+            (607, 394),
+
+            (641, 368),
+            (655, 328),
+            (690, 301),
+            (712, 261),
+
+            (729, 219),
+            (741, 176),
+            (747, 132),
+            (742, 87),
+
+            (706, 69),
+            (675, 99),
+            (658, 141),
+            (647, 185),
+
+            (640, 229),
+            (637, 274),
+            (639, 319),
+            (641, 364),
+
+            (658, 404),
+            (697, 426),
+            (741, 424),
+            (782, 405),
+
+            (820, 382),
+            (829, 338),
+            (863, 310),
+            (887, 272),
+
+            (905, 231),
+            (920, 189),
+            (930, 145),
+            (930, 100),
+
+            (903, 69),
+            (864, 89),
+            (844, 129),
+            (833, 173),
+
+            (825, 217),
+            (820, 262),
+            (820, 307),
+            (826, 351),
+
+            (834, 394),
+            (869, 420),
+            (914, 422),
+            (956, 406),
+
+            (992, 380),
+            (1006, 338),
+            (1020, 295),
+            (1048, 260),
+
+            (1089, 243),
+            (1132, 255),
+            (1155, 291),
+            (1153, 336),
+
+            (1141, 379)
+    ]
+
+    /// Catmull-Rom → 三次贝塞尔，与路径提取脚本完全同参（tension /6）。
     static let helloPath: Path = {
-        let raw: [(Double, Double)] = [
-            // h：入笔 → 上冲到顶 → 收笔落下 → 拱肩 → 出锋
-            (150, 408), (205, 290), (232, 148),
-            (224, 152), (210, 280), (176, 402),
-            (196, 392), (250, 300), (292, 264),
-            (336, 292), (356, 392), (374, 394), (386, 368),
-            // e：上冲到顶，逆时针小环，沿基线出
-            (412, 325), (434, 282),
-            (408, 266), (384, 294),
-            (390, 348), (424, 388),
-            (452, 390), (472, 366),
-            // l1：顶部圆回折，竖笔落基线交叉，U 形出锋
-            (492, 330), (518, 220), (544, 152),
-            (532, 142), (506, 250), (486, 396),
-            (508, 410), (532, 378),
-            // l2
-            (556, 320), (580, 215), (604, 150),
-            (592, 141), (566, 250), (546, 396),
-            (568, 410), (594, 376),
-            // o：陡直入笔升到顶点，碗部逆时针绕整圆，收口甩尾
-            (620, 352), (655, 320), (692, 290), (716, 268),
-            (688, 282), (672, 318), (678, 358), (714, 390),
-            (762, 384), (786, 344), (782, 298), (746, 270),
-            (768, 320), (772, 368),
-            (798, 398), (832, 404), (860, 384), (872, 352),
-        ]
-        let pts = raw.map { CGPoint(x: $0.0, y: $0.1) }
+        let pts = rawAnchors.map { CGPoint(x: $0.0, y: $0.1) }
         var p = Path()
         guard let first = pts.first else { return p }
         p.move(to: first)
@@ -313,23 +424,44 @@ struct HelloGreeting: View {
         return p
     }()
 
-    /// 归一化后的路径（左上角对齐原点）与包围盒 —— 缩放布置用
     static let pathBounds = helloPath.boundingRect
     static let normalizedPath = helloPath.applying(
         CGAffineTransform(translationX: -pathBounds.minX, y: -pathBounds.minY))
 
-    /// 苹果彩虹。位置渐变：写到哪里，哪里就是那个位置的色相 ——
-    /// 和真机 hello「h 是暖红、o 是紫」的观感一致。
+    /// 尾笔（波浪尾巴 + 回锋）占整条路径弧长的比例 —— 书写分段时间用
+    static let tailFrac = 0.0455
+
+    /// 霓虹图沿路径采样出的彩虹：紫尾 → 橙红 h → 蓝 e → 玫红 l1 →
+    /// 橙黄 l2 → 青蓝 o → 紫甩尾。手动提亮到浅底上也有荧光感。
     private static let rainbow = LinearGradient(
         colors: [
-            Color(red: 1.00, green: 0.23, blue: 0.19),   // #FF3B30
-            Color(red: 1.00, green: 0.58, blue: 0.00),   // #FF9500
-            Color(red: 1.00, green: 0.80, blue: 0.00),   // #FFCC00
-            Color(red: 0.20, green: 0.78, blue: 0.35),   // #34C759
-            Color(red: 0.20, green: 0.68, blue: 0.90),   // #32ADE6
-            Color(red: 0.69, green: 0.32, blue: 0.87),   // #AF52DE
+            Color(red: 0.69, green: 0.29, blue: 0.93),   // 紫 · 尾
+            Color(red: 0.91, green: 0.36, blue: 0.23),   // 橙红 · h 上冲
+            Color(red: 0.94, green: 0.54, blue: 0.24),   // 橙 · h 环顶
+            Color(red: 0.89, green: 0.42, blue: 0.68),   // 粉紫 · 肩
+            Color(red: 0.36, green: 0.55, blue: 0.95),   // 蓝 · e
+            Color(red: 0.48, green: 0.42, blue: 0.94),   // 蓝紫 · e 出
+            Color(red: 0.84, green: 0.31, blue: 0.49),   // 玫红 · l1
+            Color(red: 0.91, green: 0.51, blue: 0.25),   // 橙 · l1 底
+            Color(red: 0.60, green: 0.33, blue: 0.91),   // 紫 · l1→l2
+            Color(red: 0.94, green: 0.60, blue: 0.27),   // 橙黄 · l2
+            Color(red: 0.35, green: 0.66, blue: 0.95),   // 天蓝 · o 入
+            Color(red: 0.31, green: 0.75, blue: 0.97),   // 青蓝 · o 碗
+            Color(red: 0.49, green: 0.42, blue: 0.94),   // 蓝紫 · 收口
+            Color(red: 0.66, green: 0.35, blue: 0.93),   // 紫 · 甩尾
         ],
         startPoint: .leading, endPoint: .trailing)
+
+    // MARK: 视频时间轴（原片 6.02s 一轮，逐段对齐）
+    private enum Cyc {
+        static let dotEnd    = 0.62   // 墨点在起笔处涨起来
+        static let tailEnd   = 0.92   // 尾笔向左下甩出
+        static let retraceEnd = 1.12  // 回锋（沿尾笔原路收回，笔迹不变）
+        static let writeEnd  = 2.55   // 主体写完（匀速，与原片一致）
+        static let holdEnd   = 4.45   // 写满驻留
+        static let eraseEnd  = 5.82   // 从 h 那头吸走（easeInOut）
+        static let total     = 6.02   // 空一小拍，回到墨点
+    }
 
     var body: some View {
         GeometryReader { geo in
@@ -337,14 +469,13 @@ struct HelloGreeting: View {
                 RadialGradient(colors: [FirstRunInk.bgCenter, FirstRunInk.bgEdge],
                                center: .center, startRadius: 80, endRadius: 900)
                     .ignoresSafeArea()
-
                 VStack(spacing: 0) {
                     Spacer(minLength: 0)
-                    hello(size: CGSize(width: geo.size.width - 120,
-                                       height: geo.size.height * 0.42))
+                    hello(size: CGSize(width: geo.size.width - 110,
+                                       height: geo.size.height * 0.44))
                     Spacer(minLength: 0)
                     startButton
-                    Spacer().frame(height: geo.size.height * 0.16)
+                    Spacer().frame(height: geo.size.height * 0.15)
                 }
             }
             .frame(width: geo.size.width, height: geo.size.height)
@@ -352,33 +483,99 @@ struct HelloGreeting: View {
         .onAppear { boot() }
     }
 
-    /// 三层描边叠出「发光体」：宽晕 → 中晕 → 锐芯。
-    /// 单层 blur 看起来像描边，多层由内到外递减才有辉光的体积感。
-    /// 路径按可用空间等比缩放，线宽跟着缩放 —— 窗口多大，字就多大。
+    // MARK: 时间 → 笔迹进度（全部是 t 的纯函数，冻帧自检的前提）
+
+    /// 书写进度：0 = 未落笔，1 = 写满
+    private func progress(_ t: Double) -> Double {
+        let f = Self.tailFrac
+        if t < Cyc.dotEnd { return 0 }
+        if t < Cyc.tailEnd {                                  // 尾笔甩出
+            let k = (t - Cyc.dotEnd) / (Cyc.tailEnd - Cyc.dotEnd)
+            return f * easeOut(k)
+        }
+        if t < Cyc.retraceEnd { return f }                    // 回锋：笔画不动
+        if t < Cyc.writeEnd {                                 // 主体匀速书写
+            return f + (1 - f) * (t - Cyc.retraceEnd) / (Cyc.writeEnd - Cyc.retraceEnd)
+        }
+        return 1
+    }
+
+    /// 擦除进度：0 = 不擦，1 = 从起笔端吸干
+    private func erase(_ t: Double) -> Double {
+        guard t > Cyc.holdEnd else { return 0 }
+        return easeInOut(min(1, (t - Cyc.holdEnd) / (Cyc.eraseEnd - Cyc.holdEnd)))
+    }
+
+    /// 墨点：起笔处先涨出一颗墨滴（原片 0.05–0.65s），落笔后收进笔画里
+    @ViewBuilder
+    private func inkDot(_ t: Double, width w: CGFloat) -> some View {
+        let appear = min(1, max(0, (t - 0.05) / (Cyc.dotEnd - 0.05)))
+        let sink = min(1, max(0, (t - Cyc.dotEnd) / 0.14))
+        let k = (1 - sink) * easeOutBack(appear)
+        if k > 0.01 {
+            Circle()
+                .fill(Self.rainbow)
+                .frame(width: w * 0.9, height: w * 0.9)
+                .blur(radius: w * 0.16)
+                .scaleEffect(k)
+                .opacity(0.85 * (1 - sink))
+        }
+    }
+
+    /// 空心霓虹管：宽晕 → 中晕 → 玻璃管体（正片叠底，交叠处像玻璃一样
+    /// 变深）→ 亮芯。亮芯把管芯「掏空」，浅底上读出图里那种玻璃管质感。
     private func hello(size: CGSize) -> some View {
         let bb = Self.pathBounds
         let k = max(0.1, min(size.width / bb.width, size.height / bb.height))
-        let trimmed = Self.normalizedPath
-            .applying(CGAffineTransform(scaleX: k, y: k))
-            .trimmedPath(from: min(erase, progress), to: max(erase, progress))
-        return ZStack {
-            strokeLayer(trimmed, width: 22 * k, blur: 16, opacity: 0.42)
-            strokeLayer(trimmed, width: 14 * k, blur: 7,  opacity: 0.55)
-            strokeLayer(trimmed, width: 8 * k,  blur: 0.8, opacity: 1)
+        let w = max(6, size.width * 0.032)                    // 管径随窗口缩放
+        return TimelineView(.animation) { ctx in
+            // 冻结自检（--hello <0…1>）：helloT 直接给定循环相位
+            let t: Double
+            if let ht = PreviewFlags.helloT {
+                t = ht * Cyc.total
+            } else {
+                t = start.map { ctx.date.timeIntervalSince($0).truncatingRemainder(dividingBy: Cyc.total) } ?? 0
+            }
+            let p = progress(t), e = erase(t)
+            let trimmed = Self.normalizedPath
+                .applying(CGAffineTransform(scaleX: k, y: k))
+                .trimmedPath(from: min(e, p), to: max(e, p))
+            return ZStack {
+                tube(trimmed, width: w * 2.6, blur: 20, opacity: 0.26, blend: .normal)
+                tube(trimmed, width: w * 1.55, blur: 8, opacity: 0.40, blend: .normal)
+                tube(trimmed, width: w, blur: 0, opacity: 0.72, blend: .multiply)
+                tube(trimmed, width: w * 0.42, blur: 0, opacity: 0.55, blend: .normal,
+                     fill: Color(red: 1.0, green: 0.99, blue: 0.95))
+            }
+            .overlay(
+                // 墨点画在路径起笔处（裁剪坐标系 (14,393) 归一化后的位置）
+                inkDot(t, width: w)
+                    .position(x: (14 - bb.minX) * k, y: (393 - bb.minY) * k)
+                    .allowsHitTesting(false)
+            )
+            .frame(width: bb.width * k, height: bb.height * k)
         }
-        .frame(width: bb.width * k, height: bb.height * k)
         .scaleEffect(exiting ? 0.94 : 1)
         .blur(radius: exiting ? 8 : 0)
         .offset(y: exiting ? -26 : 0)
         .opacity(exiting ? 0 : 1)
     }
 
-    private func strokeLayer(_ path: Path, width: CGFloat, blur: CGFloat, opacity: Double) -> some View {
-        path
-            .stroke(Self.rainbow, style: StrokeStyle(lineWidth: width, lineCap: .round, lineJoin: .round))
-            .blur(radius: blur)
-            .opacity(opacity)
+    private func tube(_ path: Path, width: CGFloat, blur: CGFloat, opacity: Double,
+                      blend: BlendMode, fill: Color? = nil) -> some View {
+        Group {
+            if let fill {
+                path.stroke(fill, style: StrokeStyle(lineWidth: width, lineCap: .round, lineJoin: .round))
+            } else {
+                path.stroke(Self.rainbow, style: StrokeStyle(lineWidth: width, lineCap: .round, lineJoin: .round))
+            }
+        }
+        .blur(radius: blur)
+        .opacity(opacity)
+        .blendMode(blend)
     }
+
+    // MARK: 液态玻璃按钮 —— 快闪一播完就在下方浮起， hello 循环全程在场
 
     private var startButton: some View {
         Button {
@@ -391,80 +588,54 @@ struct HelloGreeting: View {
         } label: {
             Text("让我们开始吧")
                 .font(.system(size: 16, weight: .semibold))
-                .foregroundColor(.white)
+                .foregroundColor(.primary.opacity(0.85))
                 .padding(.horizontal, 36)
                 .padding(.vertical, 13)
-                .background(
-                    Capsule().fill(LinearGradient(
-                        colors: [Color(red: 0.24, green: 0.58, blue: 0.96),
-                                 Color(red: 0.04, green: 0.37, blue: 0.82)],
-                        startPoint: .top, endPoint: .bottom))
+                .background(Capsule().fill(.ultraThinMaterial))
+                .overlay(
+                    Capsule().strokeBorder(
+                        LinearGradient(colors: [.white.opacity(0.9), .white.opacity(0.12)],
+                                       startPoint: .top, endPoint: .bottom),
+                        lineWidth: 1)
                 )
-                .shadow(color: Color(red: 0.04, green: 0.37, blue: 0.82).opacity(0.35),
-                        radius: 14, y: 5)
+                .shadow(color: .black.opacity(0.10), radius: 12, y: 4)
+                .shadow(color: .white.opacity(0.65), radius: 0.5, y: 0.5)
         }
         .buttonStyle(.plain)
         .scaleEffect(exiting ? 0.96 : 1)
         .offset(y: exiting ? 18 : 0)
-        .opacity(exiting ? 0 : (buttonShown ? 1 : 0))
+        .opacity(exiting ? 0 : (buttonIn ? 1 : 0))
         .disabled(exiting)
     }
 
-    // MARK: 循环状态机
+    // MARK: 起停
 
-    /// 首写 2.0s → 停 1.2s → 擦 0.7s → 顿 0.35s → 再写，一直循环。
-    /// 写满第一遍时按钮浮出 —— 用户要看的说明一个字都不用给。
     private func boot() {
-        // 冻结模式（离屏自检）：进度定死在 --hello 给的值，按钮直接在场。
-        if let t = PreviewFlags.helloT {
-            progress = t
-            buttonShown = true
+        // 冻结模式（离屏自检）：--hello <0…1> 给的是循环相位，按钮直接在场
+        if PreviewFlags.helloT != nil {
+            buttonIn = true
             return
         }
         if settings.reduceMotion || Motion.reduced {
-            progress = 1
-            buttonShown = true
+            start = nil
+            buttonIn = true
             return
         }
-        Task { await loop() }
-    }
-
-    private func loop() async {
-        await write()
-        await MainActor.run { buttonShown = true }
-        while !Task.isCancelled {
-            try? await Task.sleep(nanoseconds: 1_200_000_000)   // 停一拍，让辉光喘口气
-            await unwrite()                                      // 从 h 那头抽走
-            try? await Task.sleep(nanoseconds: 350_000_000)
-            await write()
+        start = Date()
+        Task {
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            withAnimation(.easeOut(duration: 0.6)) { buttonIn = true }
         }
     }
 
-    private func write() async {
-        await MainActor.run {
-            withAnimation(.timingCurve(0.35, 0, 0.45, 1, duration: 2.0)) {
-                erase = 0
-                progress = 1
-            }
-        }
-        try? await Task.sleep(nanoseconds: 2_000_000_000)
-    }
+    // MARK: 缓动
 
-    /// 擦除：trim 起点 0→1，笔迹像被墨水从开头抽走那样缩短 ——
-    /// 比整体淡出更有「pen 提起来收回墨水」的手感。
-    /// 擦完无动画归零，下一笔干净开始。
-    private func unwrite() async {
-        await MainActor.run {
-            withAnimation(.timingCurve(0.4, 0, 0.6, 1, duration: 0.7)) {
-                erase = 1
-            }
-        }
-        try? await Task.sleep(nanoseconds: 700_000_000)
-        await MainActor.run {
-            var t = Transaction()
-            t.disablesAnimations = true
-            withTransaction(t) { erase = 0; progress = 0 }
-        }
+    private func easeOut(_ k: Double) -> Double { 1 - (1 - k) * (1 - k) }
+    private func easeInOut(_ k: Double) -> Double { k * k * (3 - 2 * k) }
+    private func easeOutBack(_ k: Double) -> Double {
+        let c = 1.70158
+        let x = k - 1
+        return 1 + (c + 1) * x * x * x + c * x * x
     }
 }
 
