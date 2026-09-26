@@ -3,23 +3,23 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleName</key>
-	<string>ManageBac 菜单栏</string>
+	<string>ManageBac-Buddy</string>
 	<key>CFBundleDisplayName</key>
-	<string>ManageBac 菜单栏</string>
+	<string>ManageBac-Buddy</string>
 	<key>CFBundleExecutable</key>
 	<string>MBMenuBar</string>
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.mbboard.menubar</string>
+	<string>com.mbboard.buddy</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>3.0</string>
+	<string>3.5</string>
 	<key>CFBundleVersion</key>
-	<string>3</string>
+	<string>35</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>26.0</string>
 	<key>LSUIElement</key>
